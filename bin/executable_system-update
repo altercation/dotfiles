@@ -21,6 +21,8 @@
 setopt ERR_EXIT PIPE_FAIL
 
 BREWFILE="$HOME/.homebrew/Brewfile"
+# Keeps the Brewfile-changed notice (.chezmoiscripts/run_onchange_after_brewfile-changed) quiet during this run.
+export SYSTEM_UPDATE_RUNNING=1
 
 # admin password once, then keep sudo alive until done
 sudo -v
@@ -139,6 +141,10 @@ if [[ -n "$(chezmoi git -- status --porcelain)" ]]; then
 else
   print "No dotfile changes to push."
 fi
+
+# Record the (possibly re-saved) Brewfile with chezmoi's scripts, so the
+# Brewfile-changed notice doesn't fire on this Mac's next chezmoi apply.
+chezmoi apply --include=scripts
 
 
 # =============================================================================

@@ -1,0 +1,9 @@
+{{- if eq .chezmoi.os "darwin" -}}
+#!/bin/zsh
+# Brewfile changed (e.g. on another Mac): tell me to run system-update, which
+# installs, removes and re-saves apps. chezmoi installs nothing itself.
+# Brewfile hash: {{ include "private_dot_homebrew/Brewfile" | sha256sum }}
+[[ -n $SYSTEM_UPDATE_RUNNING ]] && exit 0   # system-update is already handling it
+print -P "%F{yellow}Brewfile changed: run system-update to bring this Mac's apps in line.%f"
+osascript -e 'display notification "Run system-update to bring apps in line." with title "Brewfile changed"' &>/dev/null || true
+{{ end -}}
