@@ -1,0 +1,9 @@
+**/.DS_Store
+
+# zsh state files in ZDOTDIR (~/.config/zsh); never add these
+.config/zsh/.zsh_history
+.config/zsh/.zcompdump*
+.config/zsh/.zsh_sessions
+
+# Repo docs, not a home-folder file
+README.md

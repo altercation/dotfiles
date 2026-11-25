@@ -1,0 +1,4 @@
+# ~/.profile: sh and bash login shells (zsh doesn't read this).
+export ENV="$HOME/.config/shell/init.sh"   # interactive sh reads $ENV
+# No BASH_ENV: scripts source env.private themselves; ENV covers interactive sh.
+if [ -r "$ENV" ]; then . "$ENV"; fi

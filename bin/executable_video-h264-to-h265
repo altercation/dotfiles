@@ -1,0 +1,1 @@
+ffmpeg -i "$1" -c:v hevc_videotoolbox -vtag hvc1 "${1:r}_h265.mp4"

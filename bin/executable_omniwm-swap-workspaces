@@ -1,0 +1,88 @@
+#!/bin/zsh
+# omniwm-swap-workspaces
+#
+# Swap the visible workspaces of two stacked displays: the lower display's
+# workspace goes up, the upper one's comes down. Focus stays on the display
+# you were on (which now shows the other workspace).
+#
+# Stand-in for `omniwmctl command swap-workspace-with-monitor`, which answers
+# "ignored" in 0.8.0. It uses `workspace move-to-monitor --force` twice; --force
+# is needed because workspaces with a configured home display refuse to move
+# otherwise, and it leaves a runtime override (running this again moves them back).
+#
+# OmniWM refuses to move a workspace that has a hidden app (cmd-H), a native
+# fullscreen window, or a scratchpad window currently showing on it. If a move
+# fails, this unhides / un-fullscreens / tucks away those windows and retries
+# once; if it still fails, it undoes any half-done swap and posts a notification.
+PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+wm() { omniwmctl "$@" 2>/dev/null }
+
+notify() { osascript -e "display notification \"$1\" with title \"OmniWM workspace swap\"" >/dev/null }
+
+# What blocks workspace $1 from moving, one "<kind> <pid|slot>" per line.
+blockers() {
+  wm query windows --workspace "$1" \
+     --fields pid,is-app-hidden,is-fullscreen,layout-reason,is-scratchpad,scratchpad-index,hidden-reason --json |
+    jq -r '.result.payload.windows[]?
+      | if .isAppHidden then "hidden \(.pid)"
+        elif .isFullscreen or .layoutReason != "standard" then "fullscreen \(.pid)"
+        elif .isScratchpad and .hiddenReason == null then "scratchpad \(.scratchpadIndex)"
+        else empty end' | sort -u
+}
+
+# Clear the blockers on workspace $1.
+unblock() {
+  local kind arg
+  for kind arg in $(blockers "$1"); do
+    case $kind in
+      hidden)
+        osascript -e "tell application \"System Events\" to set visible of (first process whose unix id is $arg) to true" ;;
+      fullscreen)
+        osascript -e "tell application \"System Events\" to tell (first process whose unix id is $arg)
+          repeat with w in windows
+            try
+              if value of attribute \"AXFullScreen\" of w then set value of attribute \"AXFullScreen\" of w to false
+            end try
+          end repeat
+        end tell" ;;
+      scratchpad)
+        wm command scratchpad toggle "$arg" ;;
+    esac >/dev/null
+  done
+}
+
+# Move workspace $1 one display in direction $2; on failure fix it up and retry once.
+move() {
+  wm workspace move-to-monitor "$1" "$2" --force >/dev/null && return 0
+  unblock "$1"
+  # Wait (up to ~2s; leaving fullscreen animates) for OmniWM to see the change.
+  for i in {1..10}; do
+    sleep 0.2
+    [[ -z $(blockers "$1") ]] && break
+  done
+  wm workspace move-to-monitor "$1" "$2" --force >/dev/null
+}
+
+# One line per display, lowest first: "<workspace raw name> <is-current>"
+lines=("${(@f)$(wm query displays --fields frame,is-current,active-workspace --json |
+  jq -r '.result.payload.displays | sort_by(.frame.y)[] | "\(.activeWorkspace.rawName) \(.isCurrent)"')}")
+(( ${#lines} == 2 )) || exit 1
+read -r lower lower_current <<<$lines[1]
+read -r upper upper_current <<<$lines[2]
+# was = the focused workspace before; now = the one that lands on that display.
+if [[ $lower_current == true ]]; then was=$lower now=$upper; else was=$upper now=$lower; fi
+
+if ! move "$lower" up; then
+  notify "Unable to swap: a window on workspace $lower is in a state OmniWM won't move."
+  exit 1
+fi
+if ! move "$upper" down; then
+  wm workspace move-to-monitor "$lower" down --force >/dev/null   # undo the first move
+  wm workspace focus-name "$was" >/dev/null
+  notify "Unable to swap: a window on workspace $upper is in a state OmniWM won't move."
+  exit 1
+fi
+
+# Focusing by name also makes sure that workspace is the one shown.
+wm workspace focus-name "$now" >/dev/null

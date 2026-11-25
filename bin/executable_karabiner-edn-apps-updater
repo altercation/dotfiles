@@ -1,0 +1,76 @@
+#!/bin/sh
+#
+# karabiner-edn-apps-updater: refresh the generated :applications list in karabiner.edn
+#
+# Finds every app under /Applications and writes one entry per app between
+# these two marker lines in $GOKU_EDN_CONFIG_FILE:
+#
+#   ;; BEGIN GENERATED APPS
+#   ;; END GENERATED APPS
+#
+# Each entry looks like:
+#
+#   :1password ["^com\\.1password\\.1password$"]
+#
+# The name is the app name, lowercased, with spaces turned into hyphens. The
+# value is the app's bundle ID as an exact-match regex (dots escaped, anchored
+# with ^ and $), which is what Karabiner's frontmost_application conditions
+# expect. Everything outside the markers is left as it is.
+
+begin_marker=';; BEGIN AUTOUPDATED APPS'
+end_marker=';; END AUTOUPDATED APPS'
+
+# --- Checks: refuse to touch the file unless it is safe to ------------------
+
+edn="${GOKU_EDN_CONFIG_FILE:?GOKU_EDN_CONFIG_FILE is not set}"
+
+if ! grep -q "$begin_marker" "$edn" || ! grep -q "$end_marker" "$edn"; then
+  echo "Both marker lines must be present in $edn:" >&2
+  echo "  $begin_marker" >&2
+  echo "  $end_marker" >&2
+  exit 1
+fi
+
+# --- Build the list of entries ----------------------------------------------
+
+app_entry() {
+  app_path="$1"
+
+  # "/Applications/Little Snitch.app" -> "little-snitch"
+  app_name=$(basename "$app_path" .app | tr '[:upper:] ' '[:lower:]-')
+
+  # "com.apple.Safari" -> "com\\.apple\\.Safari" (an escaped dot inside an EDN string)
+  bundle_id=$(defaults read "$app_path/Contents/Info" CFBundleIdentifier 2>/dev/null)
+  bundle_regex=$(printf '%s' "$bundle_id" | sed 's/\./\\\\./g')
+
+  printf '  :%s ["^%s$"]\n' "$app_name" "$bundle_regex"
+}
+
+# find skips anything hidden (names starting with ".", such as
+# .Karabiner-VirtualHIDDevice-Manager.app) and stops at each .app, so the
+# helper apps nested inside other apps are skipped too.
+entries=$(
+  find /Applications -name '.*' -prune -o -name '*.app' -prune -print | while read -r app_path; do
+    app_entry "$app_path"
+  done | sort
+)
+
+# --- Replace the old block with the new entries -----------------------------
+#
+# awk copies the file line by line, prints the new entries just after the begin
+# marker, and skips the old lines until the end marker. The entries are passed
+# through the environment, not with -v, because -v would turn "\\." into "\.".
+
+tmp="$edn.tmp"
+
+entries="$entries" awk -v begin="$begin_marker" -v end="$end_marker" '
+  index($0, end)   { skipping = 0 }
+  !skipping        { print }
+  index($0, begin) { print ENVIRON["entries"]; skipping = 1 }
+' "$edn" > "$tmp" || exit 1
+
+# Write back with cat (not mv) so the original file, and any symlink to it,
+# stays in place.
+cat "$tmp" > "$edn" && rm "$tmp"
+
+echo "Updated $(printf '%s\n' "$entries" | wc -l | tr -d ' ') apps in $edn"

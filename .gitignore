@@ -1,0 +1,7 @@
+# Git ignore rules for this repo only. chezmoi skips files starting with "." in
+# its source folder, so this is never copied into the home folder.
+
+# Plain-text private files (e.g. a generated env.private). The templates that
+# produce them end in .tmpl and are not matched. Same rule as the global
+# ~/.gitignore (dot_gitignore), repeated here so it travels with the repo.
+*.private

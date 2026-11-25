@@ -1,0 +1,1434 @@
+#!/usr/bin/env zsh
+###############################################################################
+# system-defaults
+#
+# Clean-slate macOS configuration for a new (or reset) Apple silicon Mac,
+# tuned for software development. Universal: safe on laptops and desktops.
+# Target: macOS 27 "Golden Gate" (also expected to work on macOS 26 Tahoe).
+#
+# Usage:
+#   system-defaults             apply everything
+#   system-defaults --dry-run   print every command instead of running it
+#
+# Optional dependency: dockutil (`brew install dockutil`) for the Dock Layout
+# section. Without it that section is skipped.
+#
+# Each entry has a one-line description and the stock macOS value
+# ("Default:") so the script can also be used to return to a known baseline.
+# Some entries deliberately set the stock value.
+#
+# Tags used in comments:
+#   [LAPTOP]  Only matters on a MacBook (battery, lid, built-in trackpad).
+#             Harmless on a desktop. Trackpad keys also apply to a Magic Trackpad.
+#   [FDA]     Terminal (or iTerm2) needs Full Disk Access to write this domain:
+#             System Settings > Privacy & Security > Full Disk Access.
+#   [LOGOUT]  Takes effect after logging out or restarting.
+#   [VERIFY]  Private, undocumented, or reported broken/unconfirmed on
+#             macOS 26/27. Check after running: `defaults read <domain> <key>`
+#             and look at the matching System Settings pane.
+#
+# Tips:
+#   - Find a key: `defaults read > before.txt`, change it in System Settings,
+#     `defaults read > after.txt`, then `diff before.txt after.txt`.
+#   - Revert one setting to stock: `defaults delete <domain> <key>`.
+#   - Quit the app you are configuring before writing its domain.
+#
+# Sources consulted: mathiasbynens/dotfiles .macos, kadirermantr/macos-setup,
+# macos-defaults.com (yannbertrand/macos-defaults), ss64.com/mac/syntax-defaults,
+# defaults-write.com, emmer.dev, Apple Terminal User Guide, ChristopherA's
+# Tahoe gist, OS X Daily (macOS 27), Hacker News discussion of the .macos file.
+###############################################################################
+
+###############################################################################
+# Preflight                                                                   #
+###############################################################################
+
+DRY_RUN=0
+case "$1" in
+  -n|--dry-run) DRY_RUN=1 ;;
+  "") ;;
+  *) print "Usage: $0 [--dry-run]"; exit 2 ;;
+esac
+
+# Dry run: replace every command that changes the system with a function that
+# only prints it. The body of the script stays plain `defaults write ...` lines.
+if (( DRY_RUN )); then
+  dry() { print -r -- "[dry-run] ${(q-)@}" }
+  defaults()                  { dry defaults "$@" }
+  sudo()                      { dry sudo "$@" }
+  killall()                   { dry killall "$@" }
+  osascript()                 { dry osascript "$@" }
+  mkdir()                     { dry mkdir "$@" }
+  chflags()                   { dry chflags "$@" }
+  xattr()                     { dry xattr "$@" }
+  dockutil()                  { dry dockutil "$@" }
+  /usr/libexec/PlistBuddy()   { dry /usr/libexec/PlistBuddy "$@" }
+  print "Dry run: nothing will be changed."
+fi
+
+# Warn if this is not the macOS version the script was reviewed against.
+if [[ "$(sw_vers -productVersion)" != 27.* ]]; then
+  print "Note: written for macOS 27; this Mac runs $(sw_vers -productVersion)."
+fi
+
+# Detect a built-in battery (MacBook). Only used to skip battery power settings.
+IS_LAPTOP=0
+[[ -n "$(ioreg -rc AppleSmartBattery 2>/dev/null)" ]] && IS_LAPTOP=1
+
+# Confirm before changing anything. Skipped for a dry run, or when not run from
+# a terminal. Esc or q cancels (so does Ctrl-C); any other key continues.
+if (( ! DRY_RUN )) && [[ -t 0 ]]; then
+  print "This will change system and app settings on $(scutil --get ComputerName 2>/dev/null || hostname)."
+  read -rsk 1 "key?Press any key to start, or Esc / q to cancel. "
+  print
+  if [[ "$key" == $'\e' || "$key" == [qQ] ]]; then
+    print "Cancelled. Nothing was changed."
+    exit 1
+  fi
+fi
+
+# Quit System Settings so it does not overwrite the changes below.
+osascript -e 'tell application "System Settings" to quit'
+
+# Ask for the administrator password once, then keep sudo alive until done.
+if (( ! DRY_RUN )); then
+  sudo -v
+  while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+fi
+
+###############################################################################
+# General UI / Appearance                                                     #
+###############################################################################
+
+# Dark mode. Delete the key for Light. Default: unset (Light).
+defaults write NSGlobalDomain AppleInterfaceStyle -string "Dark"
+
+# Switch Light/Dark automatically. Default: false.
+defaults write NSGlobalDomain AppleInterfaceStyleSwitchesAutomatically -bool false
+
+# Accent color: -1 graphite, 0 red, 1 orange, 2 yellow, 3 green, 4 blue, 5 purple, 6 pink.
+# Default: unset (multicolor).
+# defaults write NSGlobalDomain AppleAccentColor -int 4
+
+# Always show scrollbars: WhenScrolling | Automatic | Always. Default: Automatic.
+defaults write NSGlobalDomain AppleShowScrollBars -string "Always"
+
+# Click in the scroll bar to jump to the spot clicked. Default: false.
+defaults write NSGlobalDomain AppleScrollerPagingBehavior -bool true
+
+# Sidebar icon size: 1 small, 2 medium, 3 large. Default: 2.
+defaults write NSGlobalDomain NSTableViewDefaultSizeMode -int 1
+
+# Prefer tabs when opening documents: manual | always | fullscreen. Default: fullscreen.
+defaults write NSGlobalDomain AppleWindowTabbingMode -string "always"
+
+# Double-click a window title bar: Maximize (zoom/fill) | Minimize | None. Default: Maximize.
+defaults write NSGlobalDomain AppleActionOnDoubleClick -string "Maximize"
+
+# Disable the animated focus ring. Default: true.
+defaults write NSGlobalDomain NSUseAnimatedFocusRing -bool false
+
+# Faster window resize animation for Cocoa apps. Default: unset (~0.2).
+defaults write NSGlobalDomain NSWindowResizeTime -float 0.001
+
+# Disable window open/close animations. Default: true.
+defaults write NSGlobalDomain NSAutomaticWindowAnimationsEnabled -bool false
+
+# Toolbar title rollover delay (proxy icon). Default: 0.5.
+defaults write NSGlobalDomain NSToolbarTitleViewRolloverDelay -float 0
+
+# Ctrl+Cmd+click anywhere in a window to drag it. [LOGOUT] Default: false.
+defaults write NSGlobalDomain NSWindowShouldDragOnGesture -bool true
+
+# Show ASCII control characters using caret notation in text views. Default: false.
+defaults write NSGlobalDomain NSTextShowsControlCharacters -bool true
+
+# Help Viewer windows not always on top. Default: false.
+defaults write com.apple.helpviewer DevMode -bool true
+
+# Floating Liquid Glass sidebar (macOS 26 look). macOS 27 is flatter. [VERIFY] Default: unset.
+# defaults write NSGlobalDomain NSSplitViewItemSidebarDefaultsToFloatingAppearance -bool false
+
+###############################################################################
+# Windows & Documents                                                         #
+###############################################################################
+
+# Expand the save panel by default. Default: false.
+defaults write NSGlobalDomain NSNavPanelExpandedStateForSaveMode -bool true
+defaults write NSGlobalDomain NSNavPanelExpandedStateForSaveMode2 -bool true
+
+# Expand the print panel by default. Default: false.
+defaults write NSGlobalDomain PMPrintingExpandedStateForPrint -bool true
+defaults write NSGlobalDomain PMPrintingExpandedStateForPrint2 -bool true
+
+# Save new documents to disk, not iCloud. Default: true.
+defaults write NSGlobalDomain NSDocumentSaveNewDocumentsToCloud -bool false
+
+# Reopen windows when relaunching an app. The UI checkbox "Close windows when
+# quitting an application" is on by default (= false). macos-defaults.com lists true.
+defaults write NSGlobalDomain NSQuitAlwaysKeepsWindows -bool false
+
+# Ask to keep changes when closing documents. Default: false.
+defaults write NSGlobalDomain NSCloseAlwaysConfirmsChanges -bool true
+
+# ??? I don't think I've had a problem with this so just skipping this default
+# Don't let macOS terminate idle apps automatically. Default: false.
+# defaults write NSGlobalDomain NSDisableAutomaticTermination -bool true
+
+# ??? revisit if this annoys me due to app open expectations
+# Don't restore System Settings windows on relaunch. Default: unset.
+defaults write com.apple.systempreferences NSQuitAlwaysKeepsWindows -bool false
+
+###############################################################################
+# Text Input (substitutions that break code)                                  #
+###############################################################################
+
+# Disable automatic capitalization. Default: true.
+defaults write NSGlobalDomain NSAutomaticCapitalizationEnabled -bool false
+
+# Disable smart dashes. Default: true.
+defaults write NSGlobalDomain NSAutomaticDashSubstitutionEnabled -bool false
+
+# Disable "add period with double-space". Default: true.
+defaults write NSGlobalDomain NSAutomaticPeriodSubstitutionEnabled -bool false
+
+# Disable smart quotes. Default: true.
+defaults write NSGlobalDomain NSAutomaticQuoteSubstitutionEnabled -bool false
+
+# Disable auto-correct. Default: true.
+defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
+
+# Disable WebKit auto-correct (Safari, Mail, web views). Default: true.
+defaults write NSGlobalDomain WebAutomaticSpellingCorrectionEnabled -bool false
+
+# Disable automatic text completion. Default: true.
+defaults write NSGlobalDomain NSAutomaticTextCompletionEnabled -bool false
+
+# Disable inline predictive text. Default: true.
+defaults write NSGlobalDomain NSAutomaticInlinePredictionEnabled -bool false
+
+###############################################################################
+# Keyboard                                                                    #
+###############################################################################
+
+# ??? Ideally I could turn this on and off but apparently it requires logout
+# - in my testing it just requires app restart but that's not going to work
+# for my ideal toggleable mode
+# Hold a key to repeat it instead of showing the accent menu. [LOGOUT] Default: true.
+defaults write NSGlobalDomain ApplePressAndHoldEnabled -bool false
+
+# Key repeat rate. Lower = faster. 2 is the fastest UI value (1 goes past
+# the slider and may be ignored on 27). [LOGOUT] Default: 6.
+defaults write NSGlobalDomain KeyRepeat -int 2
+
+# Delay until repeat. Lower = shorter. 15 is the shortest UI value. [LOGOUT] Default: 25.
+defaults write NSGlobalDomain InitialKeyRepeat -int 15
+
+# Full keyboard navigation (Tab moves between all controls): 0 off, 2 on.
+# Older scripts use 3; Sonoma and later document 0 and 2. Default: 0.
+defaults write NSGlobalDomain AppleKeyboardUIMode -int 2
+
+# ??? Probably want them as function keys and will reassign in karabiner?
+# or reassign the consumer keys is easier?
+# Use F1, F2, etc. as standard function keys. Default: false.
+defaults write NSGlobalDomain com.apple.keyboard.fnState -bool false
+
+# ??? which setting is useful for karabiner remapping?
+# Fn/Globe key: 0 nothing, 1 change input source, 2 emoji, 3 dictation. [REBOOT]
+# Default: 2 on Globe-key keyboards (macos-defaults.com lists 0).
+# 
+# ISSUE - can't read this and changing value in system settings doesn't affect
+# might be global? not keyboard specific?
+defaults write com.apple.HIToolbox AppleFnUsageType -int 0
+# RESET:
+# defaults delete com.apple.HIToolbox AppleFnUsageType
+
+# Show the input-source indicator when switching languages. Default: true.
+defaults write kCFPreferencesAnyApplication TSMLanguageIndicatorEnabled -bool true
+
+# Keyboard backlight off after 1 minute of inactivity, in seconds. [LAPTOP] [VERIFY] Default: 10 s.
+# defaults write com.apple.BezelServices kDimTime -int 60
+
+###############################################################################
+# Trackpad (built-in trackpad and Magic Trackpad)                             #
+###############################################################################
+# The built-in trackpad reads com.apple.AppleMultitouchTrackpad. A Bluetooth
+# Magic Trackpad reads com.apple.driver.AppleBluetoothMultitouch.trackpad.
+# Both are set. [LAPTOP] for the built-in one. [LOGOUT] for most of them.
+
+# Tap to click. Default: false.
+defaults write com.apple.AppleMultitouchTrackpad Clicking -bool true
+defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad Clicking -bool true
+defaults -currentHost write NSGlobalDomain com.apple.mouse.tapBehavior -int 1
+defaults write NSGlobalDomain com.apple.mouse.tapBehavior -int 1
+
+# Secondary click with two fingers. Default: true.
+defaults write com.apple.AppleMultitouchTrackpad TrackpadRightClick -bool true
+defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadRightClick -bool true
+
+# Corner secondary click: 0 off, 1 bottom-left, 2 bottom-right. Default: 0.
+defaults write com.apple.AppleMultitouchTrackpad TrackpadCornerSecondaryClick -int 0
+defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadCornerSecondaryClick -int 0
+
+# Click pressure: 0 light, 1 medium, 2 firm. Default: 1.
+defaults write com.apple.AppleMultitouchTrackpad FirstClickThreshold -int 1
+defaults write com.apple.AppleMultitouchTrackpad SecondClickThreshold -int 1
+
+# Force Click and haptic feedback (false = enabled). Default: false.
+defaults write com.apple.AppleMultitouchTrackpad ForceSuppressed -bool false
+
+# Haptic click strength (0 is reported as "silent clicking"). [VERIFY] Default: 1.
+# defaults write com.apple.AppleMultitouchTrackpad ActuationStrength -int 1
+
+# Three-finger drag. Turns off Dragging/DragLock below. Default: false.
+defaults write com.apple.AppleMultitouchTrackpad TrackpadThreeFingerDrag -bool true
+defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadThreeFingerDrag -bool true
+
+# Double-tap-and-drag dragging, and drag lock. Default: false.
+defaults write com.apple.AppleMultitouchTrackpad Dragging -bool false
+defaults write com.apple.AppleMultitouchTrackpad DragLock -bool false
+
+# Tracking speed, 0.0 to 3.0. [VERIFY] Default: 1.0.
+# defaults write NSGlobalDomain com.apple.trackpad.scaling -float 1.5
+
+# "Natural" scrolling (also applies to mice). Default: true.
+defaults write NSGlobalDomain com.apple.swipescrolldirection -bool true
+
+# Pinch to zoom, and two-finger rotate. Default: true.
+defaults write com.apple.AppleMultitouchTrackpad TrackpadPinch -bool true
+defaults write com.apple.AppleMultitouchTrackpad TrackpadRotate -bool true
+
+# ??? I don't know that I use this much, but leaving it on
+# Smart zoom (two-finger double-tap): 0 off, 1 on. Default: 1.
+# defaults write com.apple.AppleMultitouchTrackpad TrackpadTwoFingerDoubleTapGesture -int 0
+
+# Notification Center with a two-finger swipe from the right edge: 0 off, 3 on. Default: 3.
+defaults write com.apple.AppleMultitouchTrackpad TrackpadTwoFingerFromRightEdgeSwipeGesture -int 3
+
+# ??? OmniWM / Karabiner --- could use these gestures for workspaces & overview?
+# Swipe between full-screen apps/Spaces with four fingers, not three: 0 off, 2 on.
+# Three-finger drag above needs the three-finger swipe off. Default: 2 for both.
+defaults write com.apple.AppleMultitouchTrackpad TrackpadFourFingerHorizSwipeGesture -int 2
+defaults write com.apple.AppleMultitouchTrackpad TrackpadThreeFingerHorizSwipeGesture -int 0
+
+# Swipe up/down for Mission Control/App Exposé with four fingers, not three. Default: 2 for both.
+defaults write com.apple.AppleMultitouchTrackpad TrackpadFourFingerVertSwipeGesture -int 2
+defaults write com.apple.AppleMultitouchTrackpad TrackpadThreeFingerVertSwipeGesture -int 0
+
+# App Exposé gesture (swipe down). Default: false.
+defaults write com.apple.dock showAppExposeGestureEnabled -bool true
+
+# Show Desktop (spread thumb and three fingers). Default: true.
+defaults write com.apple.dock showDesktopGestureEnabled -bool true
+
+# Launchpad/Apps (pinch thumb and three fingers). Launchpad became "Apps" in 26. [VERIFY] Default: true.
+defaults write com.apple.dock showLaunchpadGestureEnabled -bool true
+
+# Look up and data detectors (three-finger tap): 0 off, 2 on. Default: 0 (Force Click is used).
+defaults write com.apple.AppleMultitouchTrackpad TrackpadThreeFingerTapGesture -int 0
+
+# Swipe between pages with two fingers (browsers): Default: true.
+defaults write NSGlobalDomain AppleEnableSwipeNavigateWithScrolls -bool true
+
+###############################################################################
+# Mouse                                                                       #
+###############################################################################
+
+# ??? !!! REALLY not sure if this will be an improvement... need to test
+# my sense is that I'm probably used to pointer acceleration on small surface areas
+# Turn off pointer acceleration (linear tracking). Sonoma+. [REBOOT] Default: false.
+# defaults write NSGlobalDomain com.apple.mouse.linear -bool true
+
+# Tracking speed, 0.0 to 3.0. Reported as a no-op on 26.1. [VERIFY] Default: 1.0.
+# defaults write NSGlobalDomain com.apple.mouse.scaling -float 1.5
+
+# Scroll speed. Default: unset (~0.3125).
+# defaults write NSGlobalDomain com.apple.scrollwheel.scaling -float 0.5
+
+# Magic Mouse: secondary click on right side ("TwoButton"). Default: OneButton.
+defaults write com.apple.driver.AppleBluetoothMultitouch.mouse MouseButtonMode -string "TwoButton"
+
+# Magic Mouse: momentum scrolling. Default: true.
+defaults write com.apple.driver.AppleBluetoothMultitouch.mouse MouseMomentumScroll -bool true
+
+# Swipe between pages with one finger on a Magic Mouse. Default: true.
+defaults write NSGlobalDomain AppleEnableMouseSwipeNavigateWithScrolls -bool true
+
+###############################################################################
+# Sound                                                                       #
+###############################################################################
+
+# Play feedback when volume is changed. Default: false (1 = on).
+defaults write NSGlobalDomain com.apple.sound.beep.feedback -int 0
+
+# Play user interface sound effects (Trash, screenshots). [VERIFY] Default: 1.
+defaults write com.apple.systemsound com.apple.sound.uiaudio.enabled -int 0
+
+# Alert sound file. Default: /System/Library/Sounds/Tink.aiff ("Boop" on newer systems).
+# defaults write NSGlobalDomain com.apple.sound.beep.sound -string "/System/Library/Sounds/Funk.aiff"
+
+# Alert volume, 0.0 to 1.0. Default: 1.0.
+defaults write NSGlobalDomain com.apple.sound.beep.volume -float 0.5
+
+# Flash the screen when an alert sound occurs. [FDA] Default: false.
+# defaults write com.apple.universalaccess flashScreen -bool true
+
+# Better Bluetooth audio bitpool (old SBC tweak; modern AirPods use AAC). [VERIFY] Default: unset.
+# defaults write com.apple.BluetoothAudioAgent "Apple Bitpool Min (editable)" -int 40
+
+# Startup chime: see "Other system tools" (nvram StartupMute).
+
+###############################################################################
+# Menu Bar & Control Center                                                   #
+###############################################################################
+# On macOS 26/27 these live in System Settings > Menu Bar. Restart with
+# `killall ControlCenter`. All entries here are [VERIFY] on macOS 27.
+
+# ??? Turning this back to false since my menu bar is covered and I don't need
+# seconds showing
+# Clock: show seconds. Default: false.
+defaults write com.apple.menuextra.clock ShowSeconds -bool false
+
+# Clock: show the date: 0 when space allows, 1 always, 2 never. Default: 0.
+defaults write com.apple.menuextra.clock ShowDate -int 1
+
+# Clock: show the day of the week. Default: true.
+defaults write com.apple.menuextra.clock ShowDayOfWeek -bool true
+
+# Clock: show AM/PM (12-hour clocks only). Default: true.
+defaults write com.apple.menuextra.clock ShowAMPM -bool true
+
+# Clock: analog instead of digital. Default: false.
+defaults write com.apple.menuextra.clock IsAnalog -bool false
+
+# Clock: flash the time separators. Default: false.
+defaults write com.apple.menuextra.clock FlashDateSeparators -bool false
+
+# Use a 24-hour clock everywhere. Default: false (follows region).
+defaults write NSGlobalDomain AppleICUForce24HourTime -bool true
+
+# Clock: 24-hour time in the menu bar clock. Pairs with AppleICUForce24HourTime
+# above, which is what System Settings changes. [VERIFY] Default: 0 (follows region).
+defaults write com.apple.menuextra.clock Show24Hour -int 1
+
+# Battery percentage in the menu bar. [LAPTOP] [VERIFY] Default: false.
+defaults -currentHost write com.apple.controlcenter BatteryShowPercentage -bool true
+
+# Menu bar modules: 18 = always show, 24 = don't show. [VERIFY] Default: varies.
+defaults -currentHost write com.apple.controlcenter Bluetooth -int 18
+defaults -currentHost write com.apple.controlcenter Sound -int 18
+defaults -currentHost write com.apple.controlcenter WiFi -int 18
+# defaults -currentHost write com.apple.controlcenter Display -int 24
+defaults -currentHost write com.apple.controlcenter NowPlaying -int 24
+# defaults -currentHost write com.apple.controlcenter FocusModes -int 24
+
+# ??? just leaving this untouched for now
+# Hide Siri from the menu bar. [VERIFY] Default: varies by release.
+# defaults write com.apple.Siri StatusMenuVisible -bool false
+
+# Show the AppleScript menu in the menu bar. Default: false.
+defaults write com.apple.scriptmenu ScriptMenuEnabled -bool false
+
+# Auto-hide the menu bar always / show it in full screen. [VERIFY] Default: false / false.
+# defaults write NSGlobalDomain _HIHideMenuBar -bool false
+# defaults write NSGlobalDomain AppleMenuBarVisibleInFullscreen -bool false
+
+# Menu bar icon spacing / padding. Smaller fits more icons. [LOGOUT] [VERIFY] Default: unset.
+# to unset: defaults -currentHost delete -g NSStatusItemSpacing; defaults -currentHost delete -g NSStatusItemSelectionPadding
+# defaults -currentHost write NSGlobalDomain NSStatusItemSpacing -int 12
+# defaults -currentHost write NSGlobalDomain NSStatusItemSelectionPadding -int 8
+
+###############################################################################
+# Dock                                                                        #
+###############################################################################
+# Restart with `killall Dock`.
+
+# Position: left | bottom | right. Default: bottom.
+defaults write com.apple.dock orientation -string "bottom"
+
+# Icon size in pixels. Default: 48.
+defaults write com.apple.dock tilesize -int 40
+
+# Magnification on hover. Default: false.
+defaults write com.apple.dock magnification -bool false
+
+# Magnified icon size (only used with magnification). Default: unset.
+defaults write com.apple.dock largesize -int 64
+
+# Auto-hide the Dock. Default: false.
+defaults write com.apple.dock autohide -bool true
+
+# Delay before the hidden Dock appears, in seconds. Default: 0.2.
+defaults write com.apple.dock autohide-delay -float 0
+
+# Speed of the hide/show animation, in seconds. Default: 0.5.
+defaults write com.apple.dock autohide-time-modifier -float 0.15
+
+# Minimize effect: genie | scale | suck. Default: genie.
+defaults write com.apple.dock mineffect -string "scale"
+
+# Minimize windows into the app icon. Default: false.
+defaults write com.apple.dock minimize-to-application -bool true
+
+# Show indicator dots for open apps. Default: true.
+defaults write com.apple.dock show-process-indicators -bool true
+
+# Animate opening apps (bouncing). Default: true.
+defaults write com.apple.dock launchanim -bool false
+
+# Don't bounce icons for app alerts. Default: false.
+defaults write com.apple.dock no-bouncing -bool true
+
+# Show suggested and recent apps. Default: true.
+defaults write com.apple.dock show-recents -bool false
+
+# Number of recent apps if show-recents is on. Default: 3.
+defaults write com.apple.dock show-recent-count -int 3
+
+# Show only running apps. Default: false.
+defaults write com.apple.dock static-only -bool false
+
+# Translucent icons for hidden apps. Default: false.
+defaults write com.apple.dock showhidden -bool true
+
+# ??? not using the dock a lot so unnecessary but I'll set it
+# Scroll up on a Dock icon to show that app's windows. Default: false.
+defaults write com.apple.dock scroll-to-open -bool true
+
+# Spring loading for all Dock items. Default: false.
+defaults write com.apple.dock enable-spring-load-actions-on-all-items -bool true
+
+# Highlight on hover in stack grid view. Default: false.
+defaults write com.apple.dock mouse-over-hilite-stack -bool true
+
+# Lock Dock size and contents. Default: false.
+defaults write com.apple.dock size-immutable -bool false
+defaults write com.apple.dock contents-immutable -bool false
+
+###############################################################################
+# Dock Layout (which icons appear, and in what order)                         #
+###############################################################################
+# Stored in ~/Library/Preferences/com.apple.dock.plist:
+#   persistent-apps    the apps section, left to right (top to bottom if vertical)
+#   persistent-others  the right-hand section: folders, stacks, documents
+# Finder is always first and Trash always last; neither can be added or removed.
+# Default: Apple's stock set (Apps, Safari, Messages, Mail, Maps, Photos, ...)
+# plus a Downloads stack.
+#
+# Method: dockutil (`brew install dockutil`), installed before this script runs.
+# The Dock is emptied, then items are added in the order listed, so reorder the
+# lines to reorder the Dock. --no-restart on every call; the Dock restarts once
+# at the end of the script. If dockutil is missing, this block is skipped.
+#
+# dockutil quick reference (v3.1.3, github.com/kcrawford/dockutil):
+#   --add <path|url> [--label <name>]          add an app, folder, file, or URL
+#   --remove <label|bundle id|all|spacer-tiles>
+#   --move <label> --position <n|beginning|middle|end>
+#   --after <label> | --before <label> | --replacing <label>
+#   --section apps|others
+#   --type spacer|small-spacer|flex-spacer      (with --add '')
+#   --view grid|fan|list|auto   --display folder|stack
+#   --sort name|dateadded|datemodified|datecreated|kind
+#   --list                                     show the current Dock
+# Upstream lists support through Sonoma; Homebrew ships Tahoe builds. There are
+# open issues about occasional hangs. [VERIFY] on macOS 27.
+
+if (( $+commands[dockutil] || DRY_RUN )); then
+  # Empty the Dock (both sections).
+  dockutil --remove all --no-restart
+
+  # Apple apps (paths confirmed on macOS 27).
+  dockutil --add "/System/Applications/Apps.app" --no-restart
+  dockutil --add "/Applications/Safari.app" --no-restart
+  dockutil --add "/System/Applications/Mail.app" --no-restart
+  dockutil --add "/Applications/Fantastical.app" --no-restart
+  dockutil --add "/System/Applications/Reminders.app" --no-restart
+  dockutil --add "/System/Applications/Messages.app" --no-restart
+  dockutil --add "/System/Applications/Notes.app" --no-restart
+  dockutil --add "/Applications/Ghostty.app" --no-restart
+  dockutil --add "/System/Applications/Utilities/Activity Monitor.app" --no-restart
+  dockutil --add "/Applications/1Password.app" --no-restart
+  dockutil --add "/System/Applications/System Settings.app" --no-restart
+  dockutil --add "/System/Applications/Music.app" --no-restart
+
+  # Small gap between groups.
+  dockutil --add '' --type small-spacer --section apps --no-restart
+
+  # Third-party developer apps (installed by Homebrew before this script).
+  # A missing app is reported as an error and skipped. [VERIFY]
+  dockutil --add "/Applications/Visual Studio Code.app" --no-restart
+  dockutil --add "/Applications/Google Chrome.app" --no-restart
+
+  # Right-hand section: Downloads, newest first, folder icon, opens as a grid.
+  dockutil --add "${HOME}/Downloads" --section others --sort dateadded --display folder --view grid --no-restart
+
+  # Home folder by name, as a list.
+  # dockutil --add "${HOME}" --section others --sort name --display folder --view list --no-restart
+
+  # Applications folder as a grid (a classic Launchpad substitute).
+  # dockutil --add "/Applications" --section others --sort name --display folder --view grid --no-restart
+
+  # Web URL tile.
+  # dockutil --add "https://github.com" --label "GitHub" --section others --no-restart
+else
+  print "dockutil not found; skipping Dock layout (brew install dockutil)."
+fi
+
+# --- Alternative: Dock layout with plain `defaults` (no dockutil) ------------
+# Kept for reference. Uncomment this block and comment out the dockutil block
+# above to use it. Each list is cleared, then items are added in order. An app
+# that isn't installed shows as a "?" icon.
+
+# App tile template: a plain POSIX path between these two strings.
+# dock_app='<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>'
+# dock_app_end='</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>'
+
+# Clear the apps section.
+# defaults write com.apple.dock persistent-apps -array
+
+# Apple apps (paths confirmed on macOS 27).
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/System/Applications/Apps.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/Applications/Safari.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/System/Applications/Mail.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/System/Applications/Calendar.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/System/Applications/Messages.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/System/Applications/Notes.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/System/Applications/Utilities/Terminal.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/System/Applications/Utilities/Activity Monitor.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/System/Applications/Passwords.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/System/Applications/System Settings.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/System/Applications/Music.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/System/Applications/Reminders.app${dock_app_end}"
+
+# Small gap between groups (also: "spacer-tile" for a full-width gap).
+# defaults write com.apple.dock persistent-apps -array-add '{tile-data={}; tile-type="small-spacer-tile";}'
+
+# Third-party developer apps (uncomment once installed).
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/Applications/iTerm.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/Applications/Ghostty.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/Applications/Visual Studio Code.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/Applications/Cursor.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/Applications/Zed.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/Applications/Xcode.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/Applications/Google Chrome.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/Applications/Firefox.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/Applications/Docker.app${dock_app_end}"
+# defaults write com.apple.dock persistent-apps -array-add "${dock_app}/Applications/Slack.app${dock_app_end}"
+
+# Clear the right-hand section. Default: a Downloads stack.
+# defaults write com.apple.dock persistent-others -array
+
+# Folder stacks. Options inside the dict:
+#   arrangement  1 name, 2 date added, 3 date modified, 4 date created, 5 kind
+#   displayas    0 stack, 1 folder icon
+#   showas       0 automatic, 1 fan, 2 grid, 3 list
+# Downloads: sorted by date added, shown as a folder icon, opens as a grid.
+# defaults write com.apple.dock persistent-others -array-add "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>${HOME}/Downloads</string><key>_CFURLStringType</key><integer>0</integer></dict><key>arrangement</key><integer>2</integer><key>displayas</key><integer>1</integer><key>showas</key><integer>2</integer></dict><key>tile-type</key><string>directory-tile</string></dict>"
+
+# Home folder, sorted by name, opens as a list.
+# defaults write com.apple.dock persistent-others -array-add "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>${HOME}</string><key>_CFURLStringType</key><integer>0</integer></dict><key>arrangement</key><integer>1</integer><key>displayas</key><integer>1</integer><key>showas</key><integer>3</integer></dict><key>tile-type</key><string>directory-tile</string></dict>"
+
+# Applications folder, as a grid (a classic Launchpad substitute).
+# defaults write com.apple.dock persistent-others -array-add "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>/Applications</string><key>_CFURLStringType</key><integer>0</integer></dict><key>arrangement</key><integer>1</integer><key>displayas</key><integer>1</integer><key>showas</key><integer>2</integer></dict><key>tile-type</key><string>directory-tile</string></dict>"
+
+# Recent Applications smart stack (list-type: 1 apps, 2 documents, 3 servers,
+# 4 volumes, 5 favorite items). Reported unreliable on Tahoe. [VERIFY]
+# defaults write com.apple.dock persistent-others -array-add '<dict><key>tile-data</key><dict><key>list-type</key><integer>1</integer></dict><key>tile-type</key><string>recents-tile</string></dict>'
+
+###############################################################################
+# Mission Control & Spaces                                                    #
+###############################################################################
+
+# ??? What does OmniWM expect here
+# Rearrange Spaces automatically by most recent use. Default: true.
+defaults write com.apple.dock mru-spaces -bool false
+
+# Group windows by application in Mission Control. Default: false.
+defaults write com.apple.dock expose-group-apps -bool true
+
+# ??? - Assume this is what OmniWM needs but check
+# Switch to a Space with open windows for the app being activated. Default: true.
+defaults write NSGlobalDomain AppleSpacesSwitchOnActivate -bool true
+
+# ??? CRITICAL for my general spaces use and for omniwm
+# Displays have separate Spaces (false = separate). [LOGOUT] Default: false.
+defaults write com.apple.spaces spans-displays -bool false
+
+# ??? Should be off / false
+# Drag a window to the top of the screen to enter Mission Control. Default: true.
+defaults write com.apple.dock enterMissionControlByTopWindowDrag -bool false
+
+# Mission Control animation speed. Key not found in macOS 27 libraries. [VERIFY] Default: unset.
+# defaults write com.apple.dock expose-animation-duration -float 0.1
+
+# Disable the Spaces switching "swoosh" animation. [VERIFY] Default: unset.
+# defaults write com.apple.dock workspaces-swoosh-animation-off -bool true
+
+###############################################################################
+# Hot Corners                                                                 #
+###############################################################################
+# Actions:  0/1 none, 2 Mission Control, 3 App windows, 4 Desktop,
+#           5 Start screen saver, 6 Disable screen saver, 10 Display sleep,
+#           11 Launchpad/Apps, 12 Notification Center, 13 Lock Screen, 14 Quick Note
+# Modifiers: 0 none, 131072 Shift, 262144 Control, 524288 Option, 1048576 Command
+# Defaults: bottom-right = 14 (Quick Note); the other corners = 1 (none).
+
+# Top left: None
+defaults write com.apple.dock wvous-tl-corner -int 0
+defaults write com.apple.dock wvous-tl-modifier -int 0
+
+# Top right: None
+defaults write com.apple.dock wvous-tr-corner -int 0
+defaults write com.apple.dock wvous-tr-modifier -int 0
+
+# Bottom left: None
+defaults write com.apple.dock wvous-bl-corner -int 0
+defaults write com.apple.dock wvous-bl-modifier -int 0
+
+# Bottom right: Screensaver
+defaults write com.apple.dock wvous-br-corner -int 5
+defaults write com.apple.dock wvous-br-modifier -int 0
+
+###############################################################################
+# Desktop & Window Management (Stage Manager, tiling, widgets)                #
+###############################################################################
+# Domain com.apple.WindowManager (Sonoma and later). Restart: `killall WindowManager`.
+
+# Stage Manager. Default: false.
+defaults write com.apple.WindowManager GloballyEnabled -bool false
+
+# Click wallpaper to reveal the desktop: false = only in Stage Manager. Default: true.
+defaults write com.apple.WindowManager EnableStandardClickToShowDesktop -bool false
+
+# ??? I prefer these off, particular with tiling
+# Hide desktop items (normal mode / Stage Manager). Default: false.
+defaults write com.apple.WindowManager StandardHideDesktopIcons -bool true
+defaults write com.apple.WindowManager HideDesktop -bool true
+
+# ??? Using tiling, don't need these
+# Hide widgets on the desktop (normal mode / Stage Manager). Default: false.
+defaults write com.apple.WindowManager StandardHideWidgets -bool true
+defaults write com.apple.WindowManager StageManagerHideWidgets -bool true
+
+# ??? Nope, using other wm
+# Tile by dragging windows to screen edges / to the menu bar. Default: true.
+defaults write com.apple.WindowManager EnableTilingByEdgeDrag -bool false
+defaults write com.apple.WindowManager EnableTopTilingByEdgeDrag -bool false
+
+# ??? Nope, using other wm
+# Hold Option while dragging to tile. Default: true.
+defaults write com.apple.WindowManager EnableTilingOptionAccelerator -bool false
+
+# Gaps between tiled windows. Default: true.
+defaults write com.apple.WindowManager EnableTiledWindowMargins -bool true
+
+# Stage Manager: show windows from an app all at once (0) or one at a time (1). Default: 0.
+defaults write com.apple.WindowManager AppWindowGroupingBehavior -int 0
+
+###############################################################################
+# Finder                                                                      #
+###############################################################################
+# Restart with `killall Finder`.
+
+# Show hidden (dot) files. Toggle in Finder with Cmd+Shift+. Default: false.
+defaults write com.apple.finder AppleShowAllFiles -bool true
+
+# Show all filename extensions. Default: false.
+defaults write NSGlobalDomain AppleShowAllExtensions -bool true
+
+# Warn before changing a file extension. Default: true.
+defaults write com.apple.finder FXEnableExtensionChangeWarning -bool false
+
+# Show the path bar. Default: false.
+defaults write com.apple.finder ShowPathbar -bool true
+
+# Show the status bar. Default: false.
+defaults write com.apple.finder ShowStatusBar -bool true
+
+# Show the sidebar / tab bar. Default: true / false.
+defaults write com.apple.finder ShowSidebar -bool true
+defaults write com.apple.finder ShowTabView -bool false
+
+# Show the full POSIX path in the window title. Default: false.
+defaults write com.apple.finder _FXShowPosixPathInTitle -bool true
+
+# Show the folder icon in window title bars (setting lives in Accessibility). [FDA] Default: false.
+defaults write com.apple.universalaccess showWindowTitlebarIcons -bool true
+
+# Default view: icnv icon | Nlsv list | clmv column | glyv gallery. Default: icnv.
+defaults write com.apple.finder FXPreferredViewStyle -string "Nlsv"
+
+# Keep folders on top when sorting by name, in windows / on the desktop. Default: false.
+defaults write com.apple.finder _FXSortFoldersFirst -bool true
+defaults write com.apple.finder _FXSortFoldersFirstOnDesktop -bool true
+
+# Column view: auto-size columns to fit the longest name. Tahoe+. Default: false.
+defaults write com.apple.finder _FXEnableColumnAutoSizing -bool true
+
+# Search the current folder by default: SCcf current | SCsp previous | SCev This Mac. Default: SCev.
+defaults write com.apple.finder FXDefaultSearchScope -string "SCcf"
+
+# ??? maybe a subfolder in future
+# New windows open at: PfHm home | PfDe Desktop | PfDo Documents | PfLo other path. Default: Recents.
+defaults write com.apple.finder NewWindowTarget -string "PfHm"
+defaults write com.apple.finder NewWindowTargetPath -string "file://${HOME}/"
+
+# Open folders in tabs instead of new windows. Default: true.
+defaults write com.apple.finder FinderSpawnTab -bool true
+
+# Show recent tags in the sidebar. Default: true.
+defaults write com.apple.finder ShowRecentTags -bool false
+
+# Remove items from the Trash after 30 days. Default: false.
+defaults write com.apple.finder FXRemoveOldTrashItems -bool true
+
+# Warn before emptying the Trash. Default: true.
+defaults write com.apple.finder WarnOnEmptyTrash -bool false
+
+# ??? how does this impact raise/run in omniwm scratchpads
+# Allow quitting Finder with Cmd+Q (also hides desktop icons). Default: false.
+defaults write com.apple.finder QuitMenuItem -bool true
+
+# Disable Finder window and Get Info animations. Default: false.
+defaults write com.apple.finder DisableAllAnimations -bool true
+
+# Spring-loaded folders, and the spring-loading delay. Default: true / 0.5.
+defaults write NSGlobalDomain com.apple.springing.enabled -bool true
+defaults write NSGlobalDomain com.apple.springing.delay -float 0.3
+
+# Expand these Get Info panes: General, Open With, Sharing & Permissions. Default: General only.
+defaults write com.apple.finder FXInfoPanesExpanded -dict \
+  General -bool true \
+  OpenWith -bool true \
+  Privileges -bool true
+
+# ??? if this is annoying turn it off
+# Open a new Finder window when a volume is mounted. Default: false.
+defaults write com.apple.frameworks.diskimages auto-open-ro-root -bool true
+defaults write com.apple.frameworks.diskimages auto-open-rw-root -bool true
+defaults write com.apple.finder OpenWindowForNewRemovableDisk -bool true
+
+# ??? maybe spawn a finder window first to ensure this doesn't fail
+# Icon view: show item info, snap to grid, grid spacing, icon size.
+# Fails harmlessly if Finder has never opened a window (keys don't exist yet).
+/usr/libexec/PlistBuddy -c "Set :DesktopViewSettings:IconViewSettings:showItemInfo true" ~/Library/Preferences/com.apple.finder.plist
+/usr/libexec/PlistBuddy -c "Set :StandardViewSettings:IconViewSettings:showItemInfo true" ~/Library/Preferences/com.apple.finder.plist
+/usr/libexec/PlistBuddy -c "Set :DesktopViewSettings:IconViewSettings:arrangeBy grid" ~/Library/Preferences/com.apple.finder.plist
+/usr/libexec/PlistBuddy -c "Set :StandardViewSettings:IconViewSettings:arrangeBy grid" ~/Library/Preferences/com.apple.finder.plist
+/usr/libexec/PlistBuddy -c "Set :DesktopViewSettings:IconViewSettings:gridSpacing 64" ~/Library/Preferences/com.apple.finder.plist
+/usr/libexec/PlistBuddy -c "Set :DesktopViewSettings:IconViewSettings:iconSize 64" ~/Library/Preferences/com.apple.finder.plist
+
+# ??? No need, i have hidden visible and can turn it off as needed
+# Show the ~/Library folder. Default: hidden.
+# chflags nohidden ~/Library
+# xattr -d com.apple.FinderInfo ~/Library 2>/dev/null
+
+###############################################################################
+# Desktop Icons                                                               #
+###############################################################################
+
+# ??? maybe symlinnk Desktop to someplace else in Home
+# Show icons on the desktop at all. Default: true.
+defaults write com.apple.finder CreateDesktop -bool false
+
+# Desktop: use stacks (group items by kind). Only matters while desktop icons
+# are shown (CreateDesktop above). [VERIFY] Default: unset (no stacks).
+defaults write com.apple.finder DesktopViewSettings -dict-add GroupBy Kind
+
+# Internal disks on the desktop. Default: false.
+defaults write com.apple.finder ShowHardDrivesOnDesktop -bool false
+
+# External disks on the desktop. Default: true.
+defaults write com.apple.finder ShowExternalHardDrivesOnDesktop -bool false
+
+# Removable media (USB, SD) on the desktop. Default: true.
+defaults write com.apple.finder ShowRemovableMediaOnDesktop -bool false
+
+# Connected servers on the desktop. Default: false.
+defaults write com.apple.finder ShowMountedServersOnDesktop -bool false
+
+###############################################################################
+# Screenshots                                                                 #
+###############################################################################
+
+# ??? been using tmp a long time maybe reconsider
+# Save location. Default: ~/Desktop.
+mkdir -p "${HOME}/tmp"
+defaults write com.apple.screencapture location -string "${HOME}/tmp"
+
+# Format: png | jpg | pdf | tiff | gif | bmp. Default: png.
+defaults write com.apple.screencapture type -string "png"
+
+# Drop the window shadow in window captures. Default: false.
+defaults write com.apple.screencapture disable-shadow -bool true
+
+# Include the date in the filename. Default: true.
+defaults write com.apple.screencapture include-date -bool true
+
+# Show the floating thumbnail after capture. Default: true.
+defaults write com.apple.screencapture show-thumbnail -bool true
+
+# Filename prefix. Default: "Screenshot" (localized).
+# defaults write com.apple.screencapture name -string "Screenshot"
+
+# Capture target: file | clipboard | preview | mail | messages. Default: file.
+# defaults write com.apple.screencapture target -string "file"
+
+###############################################################################
+# Accessibility                                                               #
+###############################################################################
+# com.apple.universalaccess is TCC-protected: needs [FDA] on recent macOS.
+
+# Reduce motion. Default: false.
+defaults write com.apple.universalaccess reduceMotion -bool false
+
+# Reduce transparency (also removes most Liquid Glass effects). Default: false.
+defaults write com.apple.universalaccess reduceTransparency -bool false
+
+# Increase contrast (also enables reduce transparency). Default: false.
+defaults write com.apple.universalaccess increaseContrast -bool false
+
+# Zoom with Control + scroll. Default: false.
+defaults write com.apple.universalaccess closeViewScrollWheelToggle -bool true
+defaults write com.apple.universalaccess HIDScrollZoomModifierMask -int 262144
+
+# Zoom follows keyboard focus. Default: false.
+defaults write com.apple.universalaccess closeViewZoomFollowsFocus -bool true
+
+# Shake mouse pointer to locate it. Default: true (false here means enabled).
+defaults write NSGlobalDomain CGDisableCursorLocationMagnification -bool false
+
+###############################################################################
+# Siri & Apple Intelligence                                                   #
+###############################################################################
+
+# Apple Intelligence opt-in. The numeric key can change between releases;
+# check `defaults read com.apple.CloudSubscriptionFeatures.optIn`. [REBOOT] [VERIFY] Default: true.
+# defaults write com.apple.CloudSubscriptionFeatures.optIn "545129924" -bool false
+# defaults write com.apple.CloudSubscriptionFeatures.optIn auto_opt_in -bool false
+
+# Siri AI / Writing Tools floating buttons ("Write with Siri", "Ask Siri"):
+# see the sudo section (FeatureFlags WritingTools).
+
+# Siri: voice trigger / "Hey Siri". [VERIFY] Default: varies.
+# defaults write com.apple.Siri VoiceTriggerUserEnabled -bool false
+
+###############################################################################
+# Spotlight                                                                   #
+###############################################################################
+# Spotlight ("Search or Ask") was redesigned in 26/27. The old `orderedItems`
+# array used by most dotfiles is unconfirmed on 27; configuration profiles
+# still document it. [VERIFY]
+
+# Disable Spotlight web/Siri suggestions in results. [VERIFY] Default: enabled.
+# defaults write com.apple.Spotlight orderedItems -array \
+#   '{"enabled" = 1;"name" = "APPLICATIONS";}' \
+#   '{"enabled" = 1;"name" = "SYSTEM_PREFS";}' \
+#   '{"enabled" = 1;"name" = "DIRECTORIES";}' \
+#   '{"enabled" = 1;"name" = "SOURCE";}' \
+#   '{"enabled" = 1;"name" = "DOCUMENTS";}' \
+#   '{"enabled" = 0;"name" = "MENU_SPOTLIGHT_SUGGESTIONS";}' \
+#   '{"enabled" = 0;"name" = "MENU_WEBSEARCH";}'
+
+###############################################################################
+# Security & Privacy (user level)                                             #
+###############################################################################
+
+# Require the password immediately after sleep or the screen saver starts.
+# Ignored since Ventura; the supported way is
+# `sysadminctl -screenLock immediate -password -` (prompts for your password).
+# [VERIFY] Default: 1 / 0 (System Settings default delay varies).
+# ??? need to check these
+#defaults write com.apple.screensaver askForPassword -int 1
+#defaults write com.apple.screensaver askForPasswordDelay -int 0
+
+# Screen saver start after N seconds (0 = never). [VERIFY] Default: 1200.
+defaults -currentHost write com.apple.screensaver idleTime -int 600
+
+# Personalized Apple ads. Default: true.
+defaults write com.apple.AdLib allowApplePersonalizedAdvertising -bool false
+
+# Crash reporter: prompt | none | notification | developer. Default: prompt.
+defaults write com.apple.CrashReporter DialogType -string "notification"
+
+# Send crash reports from Feedback Assistant automatically. Default: true.
+defaults write com.apple.appleseed.FeedbackAssistant Autogather -bool false
+
+# Quarantine dialog for downloaded apps ("Are you sure you want to open…").
+# Weakens a Gatekeeper protection; left off on purpose. Default: true.
+# defaults write com.apple.LaunchServices LSQuarantine -bool false
+
+###############################################################################
+# Network Volumes & Disk Images                                               #
+###############################################################################
+
+# Don't write .DS_Store files on network / USB volumes. Default: false.
+defaults write com.apple.desktopservices DSDontWriteNetworkStores -bool true
+defaults write com.apple.desktopservices DSDontWriteUSBStores -bool true
+
+# ??? reconsider - i've not found verification to be an issue or big time cost
+# especially on modern hardware
+# Skip disk image verification. Faster, less safe. Default: false.
+#defaults write com.apple.frameworks.diskimages skip-verify -bool true
+#defaults write com.apple.frameworks.diskimages skip-verify-locked -bool true
+#defaults write com.apple.frameworks.diskimages skip-verify-remote -bool true
+
+# AirDrop over Ethernet and all interfaces. [VERIFY] Default: false.
+defaults write com.apple.NetworkBrowser BrowseAllInterfaces -bool true
+
+# Don't offer new disks for Time Machine backup. Default: false.
+defaults write com.apple.TimeMachine DoNotOfferNewDisksForBackup -bool true
+
+# Stop Photos opening when an iPhone or camera is connected. Default: false.
+defaults -currentHost write com.apple.ImageCapture disableHotPlug -bool true
+
+###############################################################################
+# Printing                                                                    #
+###############################################################################
+
+# Quit the printer app when jobs finish. Default: false.
+defaults write com.apple.print.PrintingPrefs "Quit When Finished" -bool true
+
+###############################################################################
+# Software Update & App Store (user level)                                    #
+###############################################################################
+# The authoritative copies are in /Library (see the sudo section). On macOS 27
+# Apple removed "legacy software update management" for MDM; local keys still
+# exist but are [VERIFY].
+
+# Show the debug menu in the App Store. [VERIFY] Default: false.
+defaults write com.apple.appstore ShowDebugMenu -bool true
+
+# Web Inspector in the App Store. [VERIFY] Default: false.
+defaults write com.apple.appstore WebKitDeveloperExtras -bool true
+
+###############################################################################
+# Safari                                                                      #
+###############################################################################
+# Safari is sandboxed: every entry needs [FDA] and Safari must be quit.
+# Several keys moved or were ignored in Safari 17-26. [VERIFY] for all.
+
+# Show the Develop menu. Default: false.
+defaults write com.apple.Safari IncludeDevelopMenu -bool true
+defaults write com.apple.Safari.SandboxBroker ShowDevelopMenu -bool true
+
+# Enable the Web Inspector. Default: false.
+defaults write com.apple.Safari WebKitDeveloperExtrasEnabledPreferenceKey -bool true
+defaults write com.apple.Safari WebKitPreferences.developerExtrasEnabled -bool true
+defaults write com.apple.Safari com.apple.Safari.ContentPageGroupIdentifier.WebKit2DeveloperExtrasEnabled -bool true
+
+# Inspect Element in web views in every app. Default: false.
+defaults write NSGlobalDomain WebKitDeveloperExtras -bool true
+
+# Show the internal Debug menu. Default: false.
+defaults write com.apple.Safari IncludeInternalDebugMenu -bool true
+
+# Show the full URL in the address bar (reported broken on 26). Default: false.
+defaults write com.apple.Safari ShowFullURLInSmartSearchField -bool true
+
+# Show the status bar with link URLs on hover. Default: false.
+defaults write com.apple.Safari ShowOverlayStatusBar -bool true
+
+# Don't open "safe" files after download. Default: true.
+defaults write com.apple.Safari AutoOpenSafeDownloads -bool false
+
+# Tab highlights every item on a page. Default: false.
+defaults write com.apple.Safari WebKitTabToLinksPreferenceKey -bool true
+defaults write com.apple.Safari com.apple.Safari.ContentPageGroupIdentifier.WebKit2TabsToLinks -bool true
+
+# ??? check this w kagi use
+# Don't send search queries to Apple. Default: true / false.
+defaults write com.apple.Safari UniversalSearchEnabled -bool false
+defaults write com.apple.Safari SuppressSearchSuggestions -bool true
+
+# Find on page: "contains" instead of "starts with". Default: true.
+defaults write com.apple.Safari FindOnPageMatchesWordStartsOnly -bool false
+
+# Warn about fraudulent websites. Default: true.
+defaults write com.apple.Safari WarnAboutFraudulentWebsites -bool true
+
+# Block pop-ups. Default: false (JavaScript may open windows).
+defaults write com.apple.Safari WebKitJavaScriptCanOpenWindowsAutomatically -bool false
+
+# ??? using 1password so these can be off
+# AutoFill from Contacts / credit cards / other forms (passwords live in Passwords.app). Default: true.
+defaults write com.apple.Safari AutoFillFromAddressBook -bool false
+defaults write com.apple.Safari AutoFillCreditCardData -bool false
+defaults write com.apple.Safari AutoFillMiscellaneousForms -bool false
+
+# Update extensions automatically. Default: true.
+defaults write com.apple.Safari InstallExtensionUpdatesAutomatically -bool true
+
+# Show the favorites bar. Default: false.
+defaults write com.apple.Safari ShowFavoritesBar -bool false
+
+# Home page. Default: apple.com start page.
+defaults write com.apple.Safari HomePage -string "about:blank"
+
+###############################################################################
+# Mail                                                                        #
+###############################################################################
+# Mail is sandboxed and TCC-protected: needs [FDA]. Quit Mail first.
+
+# Copy addresses as foo@example.com, not "Foo Bar <foo@example.com>". Default: true.
+defaults write com.apple.mail AddressesIncludeNameOnPasteboard -bool false
+
+# ??? danger
+# Cmd+Enter sends a message. Default: Shift+Cmd+D.
+defaults write com.apple.mail NSUserKeyEquivalents -dict-add "Send" "@\U21a9"
+
+# Show attachments as icons, not inline. Default: false.
+defaults write com.apple.mail DisableInlineAttachmentViewing -bool true
+
+# Disable send/reply animations. Default: false.
+defaults write com.apple.mail DisableReplyAnimations -bool true
+defaults write com.apple.mail DisableSendAnimations -bool true
+
+# ??? maybe
+# Compose in plain text. Default: false (rich text).
+defaults write com.apple.mail PreferPlainText -bool false
+
+# Spell check: InlineSpellCheckingEnabled | NoSpellCheckingEnabled. Default: inline.
+defaults write com.apple.mail SpellCheckingBehavior -string "InlineSpellCheckingEnabled"
+
+###############################################################################
+# Messages                                                                    #
+###############################################################################
+
+# Show the subject field. Default: false.
+defaults write com.apple.MobileSMS MMSShowSubject -bool false
+
+# Disable emoji substitution, smart quotes, and continuous spell check. [VERIFY] Default: enabled.
+defaults write com.apple.messageshelper.MessageController SOInputLineSettings -dict-add "automaticEmojiSubstitutionEnablediMessage" -bool false
+defaults write com.apple.messageshelper.MessageController SOInputLineSettings -dict-add "automaticQuoteSubstitutionEnabled" -bool false
+defaults write com.apple.messageshelper.MessageController SOInputLineSettings -dict-add "continuousSpellCheckingEnabled" -bool false
+
+###############################################################################
+# Terminal                                                                    #
+###############################################################################
+# Changes apply to new windows. Don't restart Terminal if running this in it.
+
+# UTF-8 only. Default: several encodings.
+defaults write com.apple.Terminal StringEncodings -array 4
+
+# Secure Keyboard Entry (blocks other apps reading keystrokes; can break
+# text expanders). Default: false.
+defaults write com.apple.Terminal SecureKeyboardEntry -bool true
+
+# Hide line marks. Default: 1.
+defaults write com.apple.Terminal ShowLineMarks -int 0
+
+# Focus follows mouse in Terminal. Default: false.
+defaults write com.apple.Terminal FocusFollowsMouse -bool false
+
+# Default / startup profile: Basic | Pro | Homebrew | Clear Dark | ... Default: Basic.
+# defaults write com.apple.Terminal "Default Window Settings" -string "Pro"
+# defaults write com.apple.Terminal "Startup Window Settings" -string "Pro"
+
+###############################################################################
+# TextEdit                                                                    #
+###############################################################################
+
+# New documents as plain text (0) instead of rich text (1). [VERIFY] Default: 1.
+defaults write com.apple.TextEdit RichText -int 0
+
+# Open and save plain text as UTF-8. Default: system encoding.
+defaults write com.apple.TextEdit PlainTextEncoding -int 4
+defaults write com.apple.TextEdit PlainTextEncodingForWrite -int 4
+
+# Smart quotes and dashes. Default: true.
+defaults write com.apple.TextEdit SmartQuotes -bool false
+defaults write com.apple.TextEdit SmartDashes -bool false
+
+# Show the ruler. Default: true.
+defaults write com.apple.TextEdit ShowRuler -bool false
+
+###############################################################################
+# Activity Monitor                                                            #
+###############################################################################
+
+# Open the main window on launch. Default: true.
+defaults write com.apple.ActivityMonitor OpenMainWindow -bool true
+
+# Dock icon: 0 app icon, 2 network, 3 disk, 5 CPU usage, 6 CPU history. Default: 0.
+defaults write com.apple.ActivityMonitor IconType -int 0
+
+# Show: 100 all processes, 101 all hierarchically, 102 mine, 103 system, 105 active. Default: 100.
+defaults write com.apple.ActivityMonitor ShowCategory -int 100
+
+# Sort by CPU usage, descending. Default: CPUUsage / 0.
+defaults write com.apple.ActivityMonitor SortColumn -string "CPUUsage"
+defaults write com.apple.ActivityMonitor SortDirection -int 0
+
+# Update frequency in seconds: 1, 2, or 5. Default: 5.
+defaults write com.apple.ActivityMonitor UpdatePeriod -int 2
+
+###############################################################################
+# Disk Utility                                                                #
+###############################################################################
+
+# Show all devices and partitions in the sidebar. Default: false.
+defaults write com.apple.DiskUtility SidebarShowAllDevices -bool true
+
+# Show the debug menu. [VERIFY] Default: false.
+defaults write com.apple.DiskUtility DUDebugMenuEnabled -bool true
+
+###############################################################################
+# Preview, QuickTime, Photos, Music, Calendar, Contacts                       #
+###############################################################################
+
+# Preview: don't reopen documents that were open when it quit. Default: true.
+defaults write com.apple.Preview NSQuitAlwaysKeepsWindows -bool false
+
+# QuickTime: auto-play videos when opened. Default: false.
+defaults write com.apple.QuickTimePlayerX MGPlayMovieOnOpen -bool true
+
+# Music: "Now Playing" notifications on song change. Default: true.
+defaults write com.apple.Music userWantsPlaybackNotifications -bool false
+
+# Calendar: show week numbers. [VERIFY] Default: false.
+defaults write com.apple.iCal "Show Week Numbers" -bool true
+
+# Calendar: first day of week (0 Sunday, 1 Monday). Default: region.
+# defaults write com.apple.iCal "first day of week" -int 1
+
+# ??? TODO this fails on 27
+# Contacts: debug menu. [FDA] [VERIFY] Default: false.
+# defaults write com.apple.AddressBook ABShowDebugMenu -bool true
+
+###############################################################################
+# Xcode & Simulator                                                           #
+###############################################################################
+
+# Show build durations in the activity viewer. [VERIFY] Default: false.
+defaults write com.apple.dt.Xcode ShowBuildOperationDuration -bool true
+
+# Show indexing progress as a number. [VERIFY] Default: false.
+defaults write com.apple.dt.Xcode IDEIndexerActivityShowNumericProgress -bool true
+
+# Trim trailing whitespace, including whitespace-only lines. Default: true / false.
+defaults write com.apple.dt.Xcode DVTTextEditorTrimTrailingWhitespace -bool true
+defaults write com.apple.dt.Xcode DVTTextEditorTrimWhitespaceOnlyLines -bool true
+
+# Show line numbers. Default: true.
+defaults write com.apple.dt.Xcode DVTTextShowLineNumbers -bool true
+
+# Show file extensions in the navigator: 0 default, 1 always, 2 never. [VERIFY] Default: 0.
+defaults write com.apple.dt.Xcode IDEFileExtensionDisplayMode -int 1
+
+# Extra counterpart suffixes for Ctrl+Cmd+Up/Down jumping. Default: unset.
+# defaults write com.apple.dt.Xcode IDEAdditionalCounterpartSuffixes -array-add "ViewModel" "View"
+
+# Simulator screenshot location. Default: ~/Desktop.
+defaults write com.apple.iphonesimulator ScreenShotSaveLocation -string "${HOME}/tmp"
+
+###############################################################################
+# Third-party developer apps                                                  #
+###############################################################################
+# These only take effect if the app is installed (the domain is created either
+# way, which is harmless). Quit each app first.
+
+# --- VS Code family: hold a key to repeat it (vim modes) ---------------------
+# Default: true (accent menu), inherited from the global setting above.
+
+defaults write com.microsoft.VSCode ApplePressAndHoldEnabled -bool false
+defaults write com.microsoft.VSCodeInsiders ApplePressAndHoldEnabled -bool false
+defaults write com.vscodium ApplePressAndHoldEnabled -bool false
+# Cursor
+defaults write com.todesktop.230313mzl4w4u92 ApplePressAndHoldEnabled -bool false
+# Zed
+defaults write dev.zed.Zed ApplePressAndHoldEnabled -bool false
+
+# --- JetBrains IDEs (key repeat for IdeaVim). Bundle IDs vary by edition. [VERIFY]
+
+defaults write com.jetbrains.intellij ApplePressAndHoldEnabled -bool false
+defaults write com.jetbrains.pycharm ApplePressAndHoldEnabled -bool false
+defaults write com.jetbrains.goland ApplePressAndHoldEnabled -bool false
+defaults write com.jetbrains.WebStorm ApplePressAndHoldEnabled -bool false
+
+# --- Google Chrome -----------------------------------------------------------
+
+# Disable the trackpad / Magic Mouse back-swipe. Default: true.
+defaults write com.google.Chrome AppleEnableSwipeNavigateWithScrolls -bool false
+defaults write com.google.Chrome AppleEnableMouseSwipeNavigateWithScrolls -bool false
+
+# Expand the system print dialog. Default: false.
+defaults write com.google.Chrome PMPrintingExpandedStateForPrint2 -bool true
+
+# --- Other notes -------------------------------------------------------------
+# Ghostty, Alacritty, WezTerm, Kitty use config files, not `defaults`.
+# Raycast and Docker Desktop store most settings in their own databases.
+
+###############################################################################
+# System-wide settings (sudo defaults write /Library/...)                     #
+###############################################################################
+
+# ??? Double check what I have set up now on mini
+# Login window: show name and password fields instead of a user list. Default: false.
+# sudo defaults write /Library/Preferences/com.apple.loginwindow SHOWFULLNAME -bool true
+
+# Login window: show host info when clicking the clock. Default: unset.
+sudo defaults write /Library/Preferences/com.apple.loginwindow AdminHostInfo HostName
+
+# Login window: language menu. Default: false.
+sudo defaults write /Library/Preferences/com.apple.loginwindow showInputMenu -bool false
+
+# Login window: guest account. Default: false.
+sudo defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool false
+
+# Login window: message text. Default: unset.
+# sudo defaults write /Library/Preferences/com.apple.loginwindow LoginwindowText -string "If found, contact ..."
+
+# Software Update: check / download / install macOS / install security responses
+# and system data files. [VERIFY] on 27. Defaults: true / true / varies / true / true.
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool true
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool true
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool true
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate ConfigDataInstall -bool true
+
+# App Store: update apps automatically. Default: true.
+sudo defaults write /Library/Preferences/com.apple.commerce AutoUpdate -bool true
+
+# Turn off Siri AI / Writing Tools floating buttons in text fields (macOS 27).
+# Private feature flag from OS X Daily. Revert with `sudo defaults delete ...`. [REBOOT] [VERIFY] Default: enabled.
+# sudo mkdir -p /Library/Preferences/FeatureFlags/Domain
+# sudo defaults write /Library/Preferences/FeatureFlags/Domain/WritingTools LightweightUI_macOS -dict Enabled -bool false
+
+# SMB/NetBIOS name. Default: derived from computer name.
+# sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string "my-mac"
+
+###############################################################################
+# Other system tools (pmset, nvram, systemsetup, firewall, chflags, scutil)   #
+###############################################################################
+
+# --- Computer name (uncomment and set) ---------------------------------------
+# sudo scutil --set ComputerName "my-mac"
+# sudo scutil --set HostName "my-mac"
+# sudo scutil --set LocalHostName "my-mac"
+
+# --- Startup chime -----------------------------------------------------------
+
+# ??? keeping the chime
+# Mute the boot chime (Apple silicon). Delete with `sudo nvram -d StartupMute`. Default: chime on.
+# sudo nvram StartupMute=%01
+
+# --- Firewall ----------------------------------------------------------------
+# The com.apple.alf plist was retired in macOS 15; use socketfilterfw.
+
+# ??? double check with little snitch on this
+# Turn on the application firewall. Default: off.
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+
+# ??? check impact of this
+# Stealth mode (don't answer ping/port scans). Default: off.
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on
+
+# Allow signed software to receive connections automatically. Default: on.
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setallowsigned on
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setallowsignedapp on
+
+# --- Finder / volumes --------------------------------------------------------
+# Show /Volumes. Default: hidden.
+sudo chflags nohidden /Volumes
+
+# --- systemsetup (may need Full Disk Access on recent macOS) ------------------
+# Restart automatically if the system freezes. Default: off.
+sudo systemsetup -setrestartfreeze on
+
+# Time zone. See `sudo systemsetup -listtimezones`. Default: set during setup.
+# sudo systemsetup -settimezone "America/Los_Angeles"
+
+# Kept on: the standard Tailscale macOS app cannot act as a Tailscale SSH server,
+# so SSH over the tailnet needs macOS Remote Login.
+# Remote Login (SSH). Default: off.
+sudo systemsetup -setremotelogin on
+
+# --- Power (pmset) -----------------------------------------------------------
+# Check current values with `pmset -g custom`. Stock values vary by model.
+# -a = all power sources, -c = charger/AC, -b = battery.
+
+# CHECK THESE SETTINGS ON MINI
+# Display sleep on AC, in minutes. Default: 10.
+sudo pmset -c displaysleep 15
+
+# System sleep on AC (0 = never; keeps long builds and SSH sessions alive). Default: 1.
+sudo pmset -c sleep 0
+
+# Wake for network access on AC. Default: 1.
+sudo pmset -c womp 1
+
+# Prevent sleep while an SSH/remote terminal session is active. Default: 1.
+sudo pmset -a ttyskeepawake 1
+
+# Power Nap. Default: 1.
+sudo pmset -a powernap 0
+
+# Desktops: restart automatically after a power failure. Default: 0.
+(( ! IS_LAPTOP )) && sudo pmset -a autorestart 1
+
+# ??? double check my laptop settings and sleepaid app
+# Laptop-only power settings (skipped automatically on desktops). [LAPTOP]
+if (( IS_LAPTOP )); then
+  # Display sleep on battery, in minutes. Default: 2.
+  sudo pmset -b displaysleep 5
+
+  # System sleep on battery, in minutes. Default: 1.
+  sudo pmset -b sleep 10
+
+  # Wake when the lid opens. Default: 1.
+  sudo pmset -a lidwake 1
+
+  # Wake when the charger is connected. Default: 0.
+  sudo pmset -a acwake 0
+
+  # Low Power Mode on battery: 0 off, 1 on. Default: 0.
+  sudo pmset -b lowpowermode 0
+
+  # Dim the display slightly on battery. Default: 1.
+  sudo pmset -b lessbright 1
+
+  # Hibernation: 3 = RAM kept powered and saved to disk (laptop default). Don't
+  # delete /var/vm/sleepimage as old scripts do. Default: 3.
+  sudo pmset -a hibernatemode 3
+fi
+
+# --- Rosetta 2 (non-defaults; for Intel binaries in toolchains) --------------
+# Not installed on a fresh macOS 27 and not restored by upgrades. Agrees to the license.
+# softwareupdate --install-rosetta --agree-to-license
+
+###############################################################################
+# Restart affected apps                                                       #
+###############################################################################
+# Terminal and iTerm2 are left alone so this script's own window survives.
+
+for app in "Activity Monitor" "Calendar" "cfprefsd" "Contacts" "ControlCenter" \
+  "Dock" "Finder" "Mail" "Messages" "Music" "Photos" "Safari" "SystemUIServer" \
+  "TextEdit" "WindowManager" "Google Chrome"; do
+  killall "$app" 2>/dev/null
+done
+
+print "Done. Log out or restart for keyboard, trackpad and some UI changes to apply."
+print "Settings marked [FDA] need Full Disk Access for your terminal; re-run after granting it."
+
+###############################################################################
+# Reference: obsolete settings from popular scripts (not run)                 #
+###############################################################################
+# Dashboard (com.apple.dashboard mcx-disabled, devmode, dashboard-in-overlay)
+#   - Dashboard was removed in macOS 10.15.
+# sudo nvram SystemAudioVolume=" "      - Intel-only; use StartupMute on Apple silicon.
+# sudo tmutil disablelocal              - removed in macOS 10.13.
+# rm/touch/chflags /private/var/vm/sleepimage - unsafe; breaks safe sleep.
+# com.apple.windowserver DisplayResolutionEnabled - Intel/non-Retina HiDPI hack.
+# NSGlobalDomain AppleFontSmoothing     - subpixel AA removed in 10.14; only
+#                                         toggles grayscale smoothing now.
+# com.apple.dock expose-group-by-app    - renamed expose-group-apps (above).
+# com.apple.alf globalstate             - plist retired in macOS 15; use socketfilterfw.
+# com.apple.menuextra.battery ShowPercent - pre-Big Sur; see controlcenter above.
+# com.apple.menuextra.clock DateFormat  - ignored on 26/27; use the Show* keys.
+# Safari WebKitJavaEnabled / WebKitPluginsEnabled - Java and NPAPI plug-ins are gone.
+# launchctl unload ... notificationcenterui - blocked by SIP.
+# lsregister -kill -r ...               - no longer needed; slow.
+# com.apple.SoftwareUpdate ScheduleFrequency - not honored on recent macOS.
+# com.apple.commerce AutoUpdateRestartRequired - not honored on recent macOS.
+###############################################################################

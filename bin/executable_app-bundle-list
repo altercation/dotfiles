@@ -1,0 +1,6 @@
+#!/usr/bin/env zsh
+
+# this lists the app bundles and names of all installed applications
+# for use within my karabiner.edn file
+
+find /Applications -name '*.app' -prune | while read -r a; do n="${a##*/}"; printf ':%s ["^%s$"]\n' "$(echo "${n%.app}" | tr '[:upper:] ' '[:lower:]-')" "$(defaults read "$a/Contents/Info" CFBundleIdentifier 2>/dev/null | sed 's/\./\\\\./g')"; done | sort

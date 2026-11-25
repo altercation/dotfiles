@@ -1,0 +1,8 @@
+# from https://jacobtender.net/blog/resizing-video-for-mastodon/
+# and  https://www.paulox.net/2022/11/17/resize-a-video-with-ffmpeg-for-mastodon/?ref=jacobtender.net
+
+# 1080p:
+# ffmpeg -i "$1" -vf scale=w=1920:h=1200:force_original_aspect_ratio=decrease,pad=1920:1200:"(ow-iw)/2":"(oh-ih)/2" -vcodec libx264 -crf 31 -b:v 1300k "${1}_output.mp4"
+
+# 720p
+ffmpeg -i "$1" -vf scale=w=1280:h=720:force_original_aspect_ratio=decrease,pad=1280:720:"(ow-iw)/2":"(oh-ih)/2" -vcodec libx264 -crf 31 -b:v 1300k "${1}_output.mp4"

@@ -1,0 +1,9 @@
+#!/usr/bin/env zsh
+
+MOD="_STRIPPED"
+INPUT="$1"
+OUTPUT="${INPUT:h}/${INPUT:t:r}${MOD}.${INPUT:t:e}"
+convert $INPUT -strip -colorspace sRGB $OUTPUT
+exiftool -all= -overwrite_original $OUTPUT
+jhead -purejpg -autorot $OUTPUT
+

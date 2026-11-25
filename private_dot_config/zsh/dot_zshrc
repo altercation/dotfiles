@@ -1,0 +1,18 @@
+# .zshrc es@ethanschoonover.com
+
+# https://zsh.sourceforge.io/Intro/intro_3.html
+
+# PROMPT --------------------------------------------------------------
+eval "$(starship init zsh)"
+
+# EDITORS -------------------------------------------------------------
+export EDITOR='vim'
+export VISUAL='vim'
+
+# ALIASES -------------------------------------------------------------
+alias lsa='ls -la'
+alias brewdump='brew bundle dump --global --force'
+
+# COMPLETIONS ---------------------------------------------------------
+autoload -Uz compinit && compinit
+eval "$(omniwmctl completion zsh)"

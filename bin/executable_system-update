@@ -1,0 +1,160 @@
+#!/usr/bin/env zsh
+###############################################################################
+# system-update
+#
+# all in one system update & maintain on a regular schedule (manually run)
+#
+# sync dotfiles, update homebrew and app store, clean up, dump Brewfile back
+# to the dotfiles repo, then offer macOS updates (last due to poss. restart)
+#
+# my other systems push to the same dotfiles repo, so order of operations is
+# important. todo: test this further
+# 1. PULL and apply remote changes first (chezmoi update)
+# 2. INSTALL anything remote Brewfile added, so the dump in step 5 doesn't
+#    drop it. TODO: this is potentially a sort of race condition if I don't
+#    keep things synchrously uninstalled manually... todo !
+# 3. DUMP brewfile, re-add, commit, then pull --rebase before pushing
+#
+# script stops at the first command that fails (ERR_EXIT).
+###############################################################################
+
+setopt ERR_EXIT PIPE_FAIL
+
+BREWFILE="$HOME/.homebrew/Brewfile"
+
+# admin password once, then keep sudo alive until done
+sudo -v
+while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+
+
+# =============================================================================
+# 1. Dotfiles: pull and apply changes from other Macs
+# =============================================================================
+# chezmoi asks before overwriting files changed here since it last wrote them
+print "==> 1. chezmoi update"
+chezmoi update
+
+
+# =============================================================================
+# 2. Homebrew
+# =============================================================================
+print "==> 2. Homebrew"
+brew update
+brew upgrade
+
+# anything in the Brewfile that isn't installed locally (usually added on other
+# system). if skipped, the dump in step 5 removes it from the Brewfile
+# todo: this is also sort of fragile if I am in a rush and forget that hey
+# maybe I wanted that app on the other system...
+if ! brew bundle check --file "$BREWFILE" &>/dev/null; then
+  print "The Brewfile lists items not installed on this Mac:"
+  brew bundle check --file "$BREWFILE" --verbose || true
+  if read -q "?Install them now? (n = the Brewfile dump below drops them) [y/n] "; then
+    print
+    brew bundle install --file "$BREWFILE"
+  else
+    print
+  fi
+fi
+
+# Anything installed here but not in the Brewfile: usually removed on another
+# Mac (so the dump in step 5 would otherwise add it back), or installed here
+# without a dump yet. Covers formulae, casks and taps, not App Store apps.
+if [[ -n "$(brew bundle cleanup --file "$BREWFILE" 2>/dev/null)" ]]; then
+  print "Installed on this Mac but not in the Brewfile:"
+  brew bundle cleanup --file "$BREWFILE" || true   # the list (dry run); may exit 1 when items are found
+  if read -q "?Uninstall these? (n = keep them; the dump in step 5 adds them back to the Brewfile) [y/n] "; then
+    print
+    brew bundle cleanup --force --file "$BREWFILE"
+  else
+    print
+  fi
+fi
+
+# EXPERIMENTAL: the same check for App Store apps, which brew bundle cleanup
+# doesn't cover. Compares the app IDs from `mas list` with the Brewfile's
+# `mas "Name", id: ...` lines. mas asks for your password itself.
+MAS_HERE=( ${(f)"$(mas list | awk '{print $1}' || true)"} )
+MAS_LISTED=( ${(f)"$(grep -oE '^mas .*id: [0-9]+' "$BREWFILE" | grep -oE '[0-9]+$' || true)"} )
+MAS_EXTRA=( ${MAS_HERE:|MAS_LISTED} )   # in MAS_HERE but not in MAS_LISTED
+if (( $#MAS_EXTRA )); then
+  print "App Store apps installed on this Mac but not in the Brewfile:"
+  for ID in $MAS_EXTRA; do mas list | awk -v id="$ID" '$1 == id'; done
+  if read -q "?Uninstall these? (n = keep them; the dump in step 5 adds them back to the Brewfile) [y/n] "; then
+    print
+    for ID in $MAS_EXTRA; do mas uninstall "$ID"; done
+  else
+    print
+  fi
+fi
+
+
+# =============================================================================
+# 3. App Store apps
+# =============================================================================
+print "==> 3. App Store (mas)"
+mas outdated
+mas upgrade
+
+
+# =============================================================================
+# 4. Clean up
+# =============================================================================
+print "==> 4. Clean up"
+brew cleanup
+brew doctor || true   # exits 1 for warnings, usually harmless
+
+
+# =============================================================================
+# 5. Brewfile: save what's installed here
+# =============================================================================
+# --describe keeps the comment above each entry, matching the current file
+print "==> 5. Brewfile dump"
+brew bundle dump --force --describe --file "$BREWFILE"
+
+
+# =============================================================================
+# 6. Dotfiles: save local changes and push
+# =============================================================================
+# re-add copies every managed file that changed here (the Brewfile, plus any
+# other edits) back into the chezmoi source. templates are skipped
+print "==> 6. chezmoi re-add and push"
+chezmoi re-add
+
+if [[ -n "$(chezmoi git -- status --porcelain)" ]]; then
+  chezmoi git -- status --short
+  chezmoi git -- diff --stat
+  if read -q "?Commit and push these changes to the dotfiles repo? [y/n] "; then
+    print
+    chezmoi git -- add -A
+    chezmoi git -- commit -m "system-update on $(scutil --get LocalHostName), $(date +%F)"
+    # Another Mac may have pushed since step 1. If the rebase hits a conflict,
+    # the script stops: fix it with `chezmoi cd`, then `git rebase --continue`
+    # and `git push`.
+    chezmoi git -- pull --rebase
+    chezmoi git -- push
+  else
+    print "\nNot pushed. The changes stay in the chezmoi source (chezmoi cd to see them)."
+  fi
+else
+  print "No dotfile changes to push."
+fi
+
+
+# =============================================================================
+# 7. macOS updates (last: installing restarts the Mac)
+# =============================================================================
+print "==> 7. macOS updates"
+print "Checking for updates..."
+UPDATES=$(softwareupdate --list 2>&1 || true)
+print -r -- "$UPDATES"
+if [[ $UPDATES == *"No new software available"* ]]; then
+  print "macOS is up to date."
+elif read -q "?Install these now? The Mac will restart and unsaved work in open apps may be lost. [y/n] "; then
+  print
+  sudo softwareupdate --install --all --restart --force
+else
+  print "\nSkipping macOS updates for now."
+fi
+
+print "Maintenance finished."

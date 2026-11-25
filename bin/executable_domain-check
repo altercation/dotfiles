@@ -1,0 +1,28 @@
+#!/usr/bin/env zsh
+
+# first argument, list of words for first component of domain
+# second argument, list of words for second component of domain
+
+# run piped through 'tee output.txt' and then extract available domains:
+# cat output.txt | grep 'AVAIL:' | cut -f2 -w
+
+[ -z "$1" ] && { echo "requires input file"; exit } || typeset -a WORDS1=("${(@f)"$(<${1})"}")
+[ -z "$2" ] && WORDS2="" || typeset -a WORDS2=("${(@f)"$(<${2})"}")
+
+
+for WORD1 in $WORDS1
+do
+	DOMAIN="$WORD1.com"
+	whois -h whois.verisign-grs.com "domain $DOMAIN" | grep -qiE "no match|not found|no data found|no entries found|status: free" && echo "AVAIL: $DOMAIN" || echo "TAKEN: $DOMAIN"
+	sleep 0.5
+	if [ -n "$WORDS2" ]
+	then
+		for WORD2 in $WORDS2
+		do
+			DOMAIN="$WORD1$WORD2.com"
+			#DOMAIN="$WORD1.com"
+			whois -h whois.verisign-grs.com "domain $DOMAIN" | grep -qiE "no match|not found|no data found|no entries found|status: free" && echo "AVAIL: $DOMAIN" || echo "TAKEN: $DOMAIN"
+			sleep 0.5
+		done
+	fi
+done

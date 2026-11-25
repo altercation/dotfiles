@@ -1,0 +1,53 @@
+#!/bin/zsh
+# omniwm-float-center
+#
+# Toggle the focused window floating in OmniWM. If it is now floating:
+#   - shrink it to 50% of its monitor's width and/or height, but only on an
+#     axis where it is bigger than that (each axis checked on its own);
+#   - center it on that monitor.
+# Toggling a window back to tiled does nothing else.
+#
+# Needs Accessibility permission for the process that runs it (Karabiner's
+# console user server when started from a key).
+PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+focused() {
+  omniwmctl query windows --focused --fields pid,mode,frame,display --json 2>/dev/null |
+    jq -c '.result.payload.windows[0] // empty'
+}
+
+omniwmctl command toggle-focused-window-floating >/dev/null 2>&1 || exit 1
+
+# Wait (up to ~1s) for OmniWM to report the new mode and settle the frame.
+prev=
+for i in {1..10}; do
+  sleep 0.1
+  win=$(focused)
+  [[ -z $win ]] && continue
+  [[ $(jq -r .mode <<<$win) != floating ]] && continue
+  [[ $win == $prev ]] && break      # same frame twice in a row = settled
+  prev=$win
+done
+[[ $(jq -r '.mode // empty' <<<$win) == floating ]] || exit 0   # went back to tiled
+
+display=$(jq -r .display.id <<<$win)
+screens=$(omniwmctl query displays --fields id,is-main,frame,visible-frame --json 2>/dev/null)
+
+# OmniWM frames use macOS screen coordinates (origin at the bottom-left of the
+# main display, y up). System Events wants top-left, y down from the top of
+# the main display, so: top = mainHeight - (y + height).
+read -r pid w h x top <<<$(jq -r --argjson win "$win" --arg d "$display" '
+  .result.payload.displays as $ds
+  | ($ds[] | select(.isMain) | .frame.height) as $mainH
+  | ($ds[] | select(.id == $d) | .visibleFrame) as $v
+  | ([$win.frame.width,  $v.width  / 2] | min | floor) as $w
+  | ([$win.frame.height, $v.height / 2] | min | floor) as $h
+  | ($v.x + ($v.width  - $w) / 2 | floor) as $x
+  | ($v.y + ($v.height - $h) / 2) as $y
+  | "\($win.pid) \($w) \($h) \($x) \($mainH - ($y + $h) | floor)"' <<<$screens)
+[[ -n $top ]] || exit 1
+
+osascript -e "tell application \"System Events\" to tell (first application process whose unix id is $pid) to tell window 1
+  set size to {$w, $h}
+  set position to {$x, $top}
+end tell" >/dev/null

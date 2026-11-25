@@ -1,0 +1,786 @@
+;; GOKU/KARABINER CONFIG FILE --------------------------------------------------
+;; karabiner.edn for es@ethanschoonover.com / gh:altercation
+;; for use with goku to compile to karabiner json
+;; see: https://github.com/yqrashawn/GokuRakuJoudo/tree/master
+
+;; INSTALLATION ----------------------------------------------------------------
+;; Install karabiner and goku via brew. My .zshenv contains an environment
+;; variable that points at this karabiner.edn in the ~/.config/karabiner folder:
+;; export GOKU_EDN_CONFIG_FILE="$HOME/.config/karabiner/karabiner.edn"
+
+;; INVOCATION AND COMPILATION --------------------------------------------------
+;; `goku` compile EDN to karabiner.json (located in ~/.config/karabiner/)
+;; `gokuw` continually compile, watching EDN config file for changes
+;; `brew services start goku` runs `gokuw` in background as service, saves logs
+;; to ~/Library/Logs/goku.log
+
+;; DOCUMENTATION & OFFICIAL SOURCES --------------------------------------------
+;; n.b. - NOT ALL CODES AND ACTIONS ARE PROPERLY DOCUMENTED IN THE GOKU DOCS!
+;;        SEE MY NOTES THROUGHOUT FOR NON DOCUMENTED VALUES.
+;; Karabiner:        https://karabiner-elements.pqrs.org
+;; GokuRakuJoudo:    https://github.com/yqrashawn/GokuRakuJoudo
+;; EDN format:       https://github.com/edn-format/edn
+;; Goku Tutorial:    https://github.com/yqrashawn/GokuRakuJoudo/blob/master/tutorial.md
+;; Key Codes:        https://github.com/yqrashawn/GokuRakuJoudo/blob/master/src/karabiner_configurator/keys_info.clj
+;; Goku Rules        https://github.com/yqrashawn/GokuRakuJoudo/blob/master/src/karabiner_configurator/rules.clj
+;; From Modifiers:    https://karabiner-elements.pqrs.org/docs/json/complex-modifications-manipulator-definition/from/modifiers/
+;; Examples:         https://github.com/yqrashawn/GokuRakuJoudo/blob/master/examples.org
+;; Sample Configs:    https://github.com/yqrashawn/GokuRakuJoudo/tree/master/resources/configurations/edn
+
+;; BASIC CONCEPTS --------------------------------------------------------------
+;; cf https://gist.github.com/johnlindquist/f6ecdcf1dcc8ec4fac5ad90eb768acaf
+;; (above url missing some of the newer shortcodes for modifiers)
+;;
+;; Rules live inside `:main` and follow this pattern:
+;;     [:from :to :conditions {:options}]
+;; Only `:from` and `:to` are required:
+;;   {:main [{:des "My rules"
+;;            :rules [[:caps_lock :escape]     ; Caps Lock → Escape
+;;                   [:a [:1 :2 :3]]           ; a → type "123"
+;;                   [:b "open -a Safari"]]}]} ; b → run shell command
+
+;; MODIFIER CODES --------------------------------------------------------------
+;; Short and long form modifier reference for use in definitions in this file.
+;; Note: some of these
+;;
+;; "Mandatory" means that the event triggers only if the modifiers marked as
+;; mandatory are pressed. The modifiers are removed from to events.
+;;
+;; "Optional" means that the event triggers *regardless* of whether the marked
+;; modifiers are pressed. The modifiers in the optional case are passed through
+;; the to event.
+;;
+;; "Mandatory/Optional" prefixes:
+;; !    = mandatory
+;; #    = optional
+;; ##   = optional any
+;; 
+;; "Chiral" modifier codes:
+;; !!   = mandatory :left_command :left_control :left_option :left_shift
+;;        (technically this is ! mandatory followed by ! hyper)
+;; C    = :left_command
+;; T    = :left_control
+;; O    = :left_option
+;; S    = :left_shift
+;; Q    = :right_command
+;; W    = :right_control
+;; E    = :right_option
+;; R    = :right_shift
+;;
+;; "Ambidextrous" modifier codes:
+;; These are not yet in the goku docs other than in the changelog.
+;; c.f. https://github.com/yqrashawn/GokuRakuJoudo/blob/master/CHANGELOG.org?plain=1#L186-L203
+;; CC   = :command
+;; TT   = :control
+;; OO   = :option
+;; SS   = :shift
+;; !!A  = mandatory :command :control :option :shift
+;;        Note that technically this is a mandatory prefix plus a !A which is a
+;;        hyper key as goku defines it (cmd+ctrl+opt+shift). However #!A is not
+;;        implemented (does not compile) so you will only use or see !!A.
+
+;; EXAMPLES --------------------------------------------------------------------
+;; In these examples I use the terms "lean" and "rich" to refer to the two
+;; common implementations of the "hyper key" on macos. These are either:
+;; * RICH: Command + Control + Option + Shift
+;; * LEAN: Command + Control + Option (no Shift)
+;; 
+;; :!CTOx      = mandatory left command+control+option held and "x" pressed
+;; :!CCTTOOx   = mandatory ANY command+control+option held and "x" pressed
+;; :!Cx        = mandatory left command pressed, x pressed
+;; :#Cx        = x pressed, optional left command+x also matches,
+;;               (left command passed to result)
+;; :#CCx       = x pressed, optional ANY command+x also matches
+;;               (whichever command pressed is passed to result)
+;; :!C#Sx      = mandatory left command+x with optional left shift also matching
+;;               (left shift passed to result)
+;; :!C#SSx     = mandatory left command+x with optional ANY shift also matching
+;;               (whichever shift is pressed - if any - is passed to result)
+;; :!CCx       = mandatory ANY command+x
+;; :!CC##x     = mandatory ANY command+x,
+;;               optional any other modifiers are passed through
+;; :!CQx       = mandatory BOTH commands (left & right) plux 'x'
+;; :!CQ##x     = mandatory BOTH commands (left & right) plux 'x',
+;;               any other optional modifiers allowed and pass through
+;; :!!Ax       = ambidextrous, mandatory "rich" hyper-key + x
+;;               (ctrl-opt-cmd-shift + x)
+;; :!CCTTOOSSx = same as above (ambidextrous mandatory rich hyper key + x)
+;; :#CCTTOOSSx = ambidextrous optional rich hyper key + x
+;;               (rich hyperkey modifiers get passed through)
+;; :!CCTTOOx   = ambidextrous mandatory "lean" hyper-key + x (ctrl-opt-cmd + x)
+;; :#CCTTOOx   = ambidextrous optional "lean" hyper-key + x (ctrl-opt-cmd + x)
+;;               (lean hyperkey modifiers get passed through)
+;; :!CTOx      = left side lean hyper-key + x
+;;
+;; You can also use key names:
+;; :##caps_lock
+;; :!left_command
+;;
+;; Note that modifiers *must* be specified as either mandatory or optional.
+;; The initial ! or # may not be omitted (in both the input and output).
+
+;; ACTIONS ---------------------------------------------------------------------
+;; [:1 [:op "/Applications/Emacs.app"]]             ; open app by file path
+;; [:2 [:oid "org.gnu.Emacs"]]                      ; open app by bundle ID
+;; [:3 [:oi 1]]                                     ; switch to an app by its position in the recent-apps list
+;; [:4 [:softf {:dbc {:button 0}}]]                 ; double-click
+;; [:5 [:softf {:sleep {:delay_milliseconds 500}}]] ; sleep the system
+;; [:6 [:softf {:setmpos {:x 0 :y 0 :screen 0}}]]   ; move the mouse cursor
+
+;; NOTE ON HARDWARE ------------------------------------------------------------
+;; Note to self on hardware: don't forget that the reason the CTOSSb rule
+;; failed was due to the keyboard hardware (blocking)... check those boards!
+;;                [:!CTOb [:!Cb]]   ;works
+;;                [:!CTOSSb [:!COb]]  ;FAILS
+
+{;; START GOKU CONFIG ----------------------------------------------------------
+ ;;
+ ;; PROFILES/TIMING (ms) -------------------------------------------------------
+ ;; If defining a profile we need all four timings here (in ms) otherwise they
+ ;; get compuled to null.
+ ;; Default values are alone=1000, held=500, delay=500, sim=50,
+ ;; simlayer-threshold=250
+
+ :profiles {:Default {:default true
+                      :alone 500   ; pressed for <300ms = a tapped key
+                      :held 500   ; pressed for >500s = a held key
+                      :delay 300   ; :delayed (invoked/canceled) actions time
+                      :sim 50}}  ; keys pressed together within <50ms = chord
+
+ :simlayer-threshold 250 ; top level only; silently ignored inside :profiles
+
+ ;; LAYERS ---------------------------------------------------------------------
+ ;; Goku supports two types of builtin layers: simlayers and layers.
+ ;; * simlayers are fast, simultaneous press type layers
+ ;; * layers are more hold and pick the key type
+ ;; In each case modifiers get dropped so I construct a couple layers manually
+ ;; in order to pass through modifiers (currently things like shift in the case
+ ;; of universal-sidebar below (there may be other instances of modifier pass
+ ;; through), so if I stop using modifier pass through or reconfigure how the
+ ;; the secondary layers (quit/open) work there then maybe I'll revert to
+ ;; regular layers for goku consistency. Not really important to do though, I
+ ;; don't think. No obvious downside of my handling layers "manually" like this.
+ ;;
+ ;; Basically in those manually configured layers (opsmode, wmmode which is
+ ;; currently merged with opsmode but easily separated back out) I set a "layer"
+ ;; variable on press, clear it on release. alone=normal key tap.
+ ;;
+ ;; caps lock as layer activator is my daily driver and primary mod key.
+ ;; I also lean on it to do window management for omniwm (currentl wm of choice)
+ ;;
+ ;;   caps lock (hold) = wm-mode      : window navigation + open apps (tap = esc)
+ ;;   tab       (hold) = wm-mode-alt  : window movement + new windows (tap = tab)
+
+ ;; APPLICATIONS ---------------------------------------------------------------
+ ;; I am doing a rough dump of the apps on my machine and their bundle ids
+ ;; with a one liner (in my dotfiles bin directory as `karabiner-edn-apps-updater`)
+ ;;
+ ;; find /Applications -name '*.app' -prune | while read -r a; do n="${a##*/}"; \
+ ;; printf ':%s ["^%s$"]\n' "$(echo "${n%.app}" | tr '[:upper:] ' '[:lower:]-')"\
+ ;; "$(defaults read "$a/Contents/Info" CFBundleIdentifier 2>/dev/null \
+ ;; | sed 's/\./\\\\./g')"; done | sort
+ ;;
+ ;; Use the app aliases as conditions:
+ ;; [:a :b :safari] (just in safari)
+ ;; [:a :b :!safari] (every app except safari)
+ ;;
+ ;; Note that these are strict string matches (e.g. limited to start/end of
+ ;; bundle ID via ^/$. It is possible to have a looser but still probably
+ ;; correct match using simply ["com.apple.Safari"] for example. Or even
+ ;; by simply dropping the end-of-string match ($) to allow variants.
+ ;;
+ ;; Quick find of bundle id with: `osascript -e 'id of app "Application Name"'`
+
+ :applications {;; BEGIN AUTOUPDATED APPS
+                :1blocker ["^com\\.khanov\\.BlockerX$"]
+                :1password ["^com\\.1password\\.1password$"]
+                :1password-for-safari ["^com\\.1password\\.safari$"]
+                :acrobat-distiller ["^com\\.adobe\\.distiller$"]
+                :actions-for-obsidian ["^co\\.zottmann\\.ActionsForObsidian$"]
+                :adobe-acrobat ["^com\\.adobe\\.Acrobat\\.Pro$"]
+                :adobe-audition-2027 ["^com\\.adobe\\.Audition$"]
+                :adobe-creative-cloud-diagnostics ["^com\\.adobe\\.cc\\.Adobe-Creative-Cloud-Diagnostics$"]
+                :adobe-illustrator ["^com\\.adobe\\.illustrator$"]
+                :adobe-indesign-2027 ["^com\\.adobe\\.InDesign$"]
+                :adobe-media-encoder-2027 ["^com\\.adobe\\.ame\\.application\\.27$"]
+                :adobe-photoshop-2027 ["^com\\.adobe\\.Photoshop$"]
+                :adobe-premiere-pro-2027 ["^com\\.adobe\\.PremierePro\\.27$"]
+                :agcontroller ["^com\\.yamaha\\.music\\.AGController$"]
+                :anki ["^net\\.ankiweb\\.anki$"]
+                :audio-hijack ["^com\\.rogueamoeba\\.audiohijack$"]
+                :betterdisplay ["^pro\\.betterdisplay\\.BetterDisplay$"]
+                :bettertouchtool ["^com\\.hegenberg\\.BetterTouchTool$"]
+                :blackmagic-disk-speed-test ["^com\\.blackmagic-design\\.DiskSpeedTest$"]
+                :bleunlock ["^jp\\.sone\\.BLEUnlock$"]
+                :bluetooth-inspector ["^com\\.georgegarside\\.bluetoothinspector$"]
+                :calibre ["^net\\.kovidgoyal\\.calibre$"]
+                :carbon-copy-cloner ["^com\\.bombich\\.ccc$"]
+                :ccxprocess ["^com\\.adobe\\.CCXProcess$"]
+                :cheatsheet ["^maccatalyst\\.com\\.overdesigned\\.Cheatsheet$"]
+                :claude ["^com\\.anthropic\\.claudefordesktop$"]
+                :cmux ["^com\\.cmuxterm\\.app$"]
+                :contact-sheets ["^com\\.apple\\.ScriptEditor\\.id\\.Contact-Sheets$"]
+                :controllerforhomekit ["^com\\.janandre\\.HomeKitTimers$"]
+                :core-sync ["^com\\.adobe\\.accmac$"]
+                :creative-cloud ["^com\\.adobe\\.acc\\.AdobeCreativeCloud$"]
+                :creative-cloud-uninstaller ["^com\\.adobe\\.ACCC\\.Uninstaller$"]
+                :devonthink ["^com\\.devon-technologies\\.think$"]
+                :discord ["^com\\.hnc\\.Discord$"]
+                :fantastical ["^com\\.flexibits\\.fantastical2\\.mac$"]
+                :flighty ["^com\\.flightyapp\\.flighty$"]
+                :fork ["^com\\.DanPristupov\\.Fork$"]
+                :forklift ["^com\\.binarynights\\.ForkLift$"]
+                :fujifilm-x-raw-studio ["^com\\.fujifilm\\.denji\\.X-RAW-STUDIO$"]
+                :garageband ["^com\\.apple\\.garageband10$"]
+                :ghostty ["^com\\.mitchellh\\.ghostty$"]
+                :goodnotes ["^com\\.goodnotesapp\\.x$"]
+                :google-chrome ["^com\\.google\\.Chrome$"]
+                :ham-toolbox ["^de\\.roskosch\\.HAM-Toolbox$"]
+                :homecam ["^com\\.aaronpearce\\.Homecam$"]
+                :imovie ["^com\\.apple\\.iMovieApp$"]
+                :infuse ["^com\\.firecore\\.infuse$"]
+                :kagi-for-safari ["^com\\.kagimacOS\\.Kagi-Search$"]
+                :kagi-news ["^com\\.kagi\\.news$"]
+                :karabiner-elements ["^org\\.pqrs\\.Karabiner-Elements\\.Settings$"]
+                :karabiner-eventviewer ["^org\\.pqrs\\.Karabiner-EventViewer$"]
+                :keyboard-maestro ["^com\\.stairways\\.keyboardmaestro\\.editor$"]
+                :keyboardcleantool ["^com\\.hegenberg\\.KeyboardCleanTool$"]
+                :keynote-creator-studio ["^com\\.apple\\.Keynote$"]
+                :lastbook ["^local\\.lastbook\\.desktop$"]
+                :little-snitch ["^at\\.obdev\\.littlesnitch$"]
+                :loopback ["^com\\.rogueamoeba\\.Loopback$"]
+                :macwhisper ["^com\\.goodsnooze\\.MacWhisper$"]
+                :make-calendar ["^com\\.apple\\.ScriptEditor\\.id\\.Make-Calendar$"]
+                :mela ["^recipes\\.mela\\.appkit$"]
+                :msgfiler-4 ["^com\\.atow\\.MsgFiler4$"]
+                :nitro ["^com\\.gentlemencoders\\.nitro$"]
+                :numbers-creator-studio ["^com\\.apple\\.Numbers$"]
+                :obsidian ["^md\\.obsidian$"]
+                :obsidian-web-clipper ["^md\\.obsidian\\.Obsidian-Web-Clipper$"]
+                :omniwm ["^com\\.barut\\.OmniWM$"]
+                :ooooo ["^build\\.bru\\.Ooooo$"]
+                :openin ["^app\\.loshadki\\.OpenIn$"]
+                :pages-creator-studio ["^com\\.apple\\.Pages$"]
+                :parallels-desktop ["^com\\.parallels\\.desktop\\.console$"]
+                :parcel ["^com\\.mr-brightside\\.myParcel$"]
+                :pdf-viewer ["^com\\.pspdfkit\\.viewer$"]
+                :pixeldish ["^lgbt\\.dappy\\.pixeldish$"]
+                :qr-factory ["^com\\.tunabelly\\.qrfactory3$"]
+                :quicklook-video ["^uk\\.org\\.marginal\\.qlvideo$"]
+                :remind-me-faster ["^chojubo\\.addReminder$"]
+                :safari ["^com\\.apple\\.Safari$"]
+                :screens-5 ["^com\\.edovia\\.screens\\.5$"]
+                :sdr-control ["^de\\.roskosch\\.MacIcomApp$"]
+                :simple-podcast-manager ["^com\\.steveneely\\.simple-podcast-manager$"]
+                :sleep-aid ["^com\\.ohanaware\\.sleepAidRG2$"]
+                :soundsource ["^com\\.rogueamoeba\\.soundsource$"]
+                :steam ["^com\\.valvesoftware\\.steam$"]
+                :streaks ["^com\\.streaksapp\\.streak$"]
+                :swinsian ["^com\\.swinsian\\.Swinsian$"]
+                :tableflip ["^de\\.christiantietze\\.TableFlip$"]
+                :tailscale ["^io\\.tailscale\\.ipn\\.macsys$"]
+                :tot ["^com\\.iconfactory\\.Tot$"]
+                :transmission ["^org\\.m0k\\.transmission$"]
+                :tuna ["^com\\.brnbw\\.Tuna$"]
+                :utc-time ["^com\\.sindresorhus\\.UTC-Time$"]
+                :visual-studio-code ["^com\\.microsoft\\.VSCode$"]
+                :vlc ["^org\\.videolan\\.vlc$"]
+                :web-archives-for-safari ["^dev\\.armin\\.webarchives$"]
+                :web-gallery ["^com\\.apple\\.ScriptEditor\\.id\\.Web-Gallery$"]
+                :whatcable ["^uk\\.whatcable\\.whatcable$"]
+                :whatsapp ["^net\\.whatsapp\\.WhatsApp$"]
+                :wifi-explorer ["^wifiexplorer$"]
+                :wireshark ["^org\\.wireshark\\.Wireshark$"]
+                :yubico-authenticator ["^com\\.yubico\\.yubioath$"]
+                :zoom.us ["^us\\.zoom\\.xos$"]
+                ;; END AUTOUPDATED APPS
+                ;; anything below here will be retained on script run
+                :finder ["^com\\.apple\\.finder$"]
+                :vscode ["^com\\.microsoft\\.VSCode$"]
+                :messages ["^com\\.apple\\.MobileSMS$"]
+                :reminders ["^com\\.apple\\.reminders$"]
+                ;;
+};applications
+
+ :froms {:sidebar-toggle {:key :b}        ; wm-mode + b         (main/left sidebar)
+         :sidebar-toggle-alt {:key :!SSb} ; wm-mode + shift + b (alternate/right sidebar)
+         :palette-trigger {:key :p}       ; wm-mode + p         (application specific command palette)
+         ;;
+};froms
+
+ ;; The :tos below (to-hyperL/to-hyperR) are no longer used by any rule; here for reference
+ ;; The :lazy option kept a held-and-released hyper key from firing;
+ ;; with layers, holding and releasing sends nothing anyway.
+ ;; :tos {:to-hyperL {:key :left_command  :modi [:left_control :left_option]   :lazy true} 
+ ;;       :to-hyperR {:key :right_command :modi [:right_control :right_option] :lazy true} 
+ ;;      };; :tos
+
+ :templates {             ;; New window via the app's own AppleScript command (%1$s = app name,
+             ;; %2$s = command). If the app isn't running, it just launches,
+             ;; because launching already opens a window.
+             ;; TODO - does :open or :oid do the same?
+             :new-window "osascript -e 'if application \"%1$s\" is running then tell application \"%1$s\" to %2$s' -e 'tell application \"%1$s\" to activate'"
+             ;; nudge is a fast rescue command when a window spawns with the omniwm workspace bar obscuring it
+             :nudge "osascript -e 'tell application \"System Events\" to tell (first application process whose frontmost is true) to tell window 1 to set position to {(item 1 of (get position)) + %1$s, (item 2 of (get position)) + %2$s}'"
+             ;;:omniwm-kill "/usr/bin/pkill -x OmniWM; while /usr/bin/pgrep -qx OmniWM; do sleep 0.2; done; /usr/bin/open -b com.barut.OmniW"
+             :tailscale-exit-cycle "$HOME/bin/tsexit"
+             :test1 "say -v Zosia 'hello my frend, do you hav ze dokuments?'"
+             :test2 "say -v Zosia 'hello'; say -v Zosia 'goodbye'"
+             :omniwm-cli "/opt/homebrew/bin/omniwmctl command %1$s"
+             ;; multi variant below doesn't use ; since multiple shell commands in goku/karabiner sometimes fail in that case. chaining with no-fail conditionals instead. hacky.
+             :omniwm-cli-multi "/opt/homebrew/bin/omniwmctl command %1$s || : && /opt/homebrew/bin/omniwmctl command %2$s"
+             :omniwm-kill "$HOME/bin/omniwm-kill"
+             :omniwm-scratchpad "$HOME/bin/omniwm-scratchpad %1$s %2$s"   ; in :templates
+             :omniwm-float-center "$HOME/bin/omniwm-float-center"
+             :omniwm-swap-workspaces "$HOME/bin/omniwm-swap-workspaces"
+             :omniwm-split "$HOME/bin/omniwm-split %1$s" 
+             :omniwm-workspace-preset "$HOME/bin/omniwm-workspace-preset %1$s"
+             ;; keymap help overlay (see HELP-MODE); the [p] keeps pkill from matching its own shell
+             :keymap-help "$HOME/bin/keymap-help"
+             :keymap-help-hide "/usr/bin/pkill -f 'JavaScript .*keymap-hel[p]'"
+             ;;
+};templates
+
+ :main [;; primary rule blocks (each shows as named entry in the Karabiner GUI)
+
+        ;; {:des "TEST: y = say test phrase" :rules [[:!CTOSy [:test2]]]}
+
+        ;; OPMODE <- CAPSLOCK (Operations Mode)
+        ;; (combined with WMMODE)
+        ;;
+        ;; Note on modes:
+        ;; These rule blocks are structured so that I can separate out
+        ;; the OPMODE-WM-* blocks into an entirely separate mode.
+        ;; For example OPMODE-WM-* could become WMMODE-*
+        ;; At the time of this note I've experimented with both consolidated
+        ;; OPMODE-* and split OPMODE / WMMODE, each triggered by differen
+        ;; modifiers (held capslock / held tab, respectively).
+        ;; Given that: 1) I'm trying to reduce cognitive load and 2) the
+        ;; primary need to separate out was me wanting to experiment with
+        ;; "bare" hjkl as cursor nav in OPMODE and window nav in WMMODE, I have
+        ;; decided that the benefits outweigh the costs. I'm also just trying to
+        ;; avoid collisions of keys between OPMODE and any nominal WMMODE, so
+        ;; I am consolidating into OPMODE-* for this. Effectively, however, I could
+        ;; revert to a split mode in future and I could also turn off any of the
+        ;; OPMODE-WM-* rule blocks or easily switch to a different WM if needed
+        ;; as long as I maintain consistency in separating out rule blocks cleanly.
+        ;;
+        ;; This block toggles TWO layer variables: opsmode and wmmode. If I want to
+        ;; separate out the wmmode to a different trigger key, all I need to do is remove
+        ;; the assignement of that value here and move it to another rule block
+        ;; like the tab block commented out below.
+        ;;
+        ;; SUMMARY
+        ;; Core shortcuts and activations. My primary control layer.
+        ;; Separate from WM mode so that I can turn off WM specific items on a system
+        ;; that doesn't have that WM installed (or can more easily refactor for a diff WM)
+        ;;
+        ;; DETAILS
+        ;; ## lets any other modifiers be held first (shift+caps still enters the layer)
+        ;; tap=esc / release=leave layer
+        ;;
+        {:des "OPSMODE-KEY (capslock): Activation key for OPSMODE. Hold caps lock = operations layer (tap = esc)"
+         :rules [[:##caps_lock [["opsmode" 1] ["wmmode" 1]] nil {:alone :escape :afterup [["opsmode" 0] ["wmmode" 0]]}]]}
+
+        ;; WN-MODE <- TAB
+        ;;
+        ;; NB: OFF UNLESS NEEDED TO SEPARATE OUT MODES!
+        ;;
+        ;; SUMMARY
+        ;; One of two "primary" modes (the other being OPSMODE)
+        ;; Separating modes so that I can disable or change to a different window manager
+        ;; and turn off WM specific rules.
+        ;;
+        ;; DETAILS
+        ;; #SS lets shift through, so shift+tab still taps as shift-tab.
+        ;; tap=tab / release=leave layer, clear notification if present from ":held"
+        ;; 
+        ;; REFERENCE
+        ;; for ref (removed :held component of rule)
+        ;; :held [:noti :wm "Window Movement Mode"] :params {:held 200} ; to avoid flashing on just tab
+        ;; {:des "OMNIWM-MODE-ACTIVATE (tab): Activation key for OMNIWM-MODE. Hold Tab = window management w/OmniWM"
+        ;;  :rules [[:#SStab [["wmmode" 1]] nil {:alone :tab :afterup [["wmmode" 0] [:noti :wm]]}]]}
+
+        ;; CURSOR-MODE (tab)
+        ;; hjkl as cursor only movement
+        ;; {:des "OMNIWM-MODE-ACTIVATE (tab): Activation key for OMNIWM-MODE. Hold Tab = window management w/OmniWM"
+        ;; :rules [[:#SStab [["wmmode" 1]] nil {:alone :tab :afterup [["wmmode" 0] [:noti :wm]]}]]}
+
+        ;; QUIT-MODE
+        ;;
+        ;; SUMMARY
+        ;; "latched layer": entered by caps+q (see CONTROL-MODE), stays on
+        ;; with nothing held, ends on the next key press or after 5s. The second q works
+        ;; with or without the control-mode key (capslock) still held.
+        ;; The cancelling key is ingested and discarded.
+        ;; `:repeat false` so holding the second q can't quit the next app as well.
+        ;;
+        ;; IMPORTANT POSITION NOTE
+        ;; This block must stay above CONTROL-MODE-* (may be below CONTROL-MODE-ACTIVATE)
+        ;; because Karabiner will trigger on first mode match and both control-mode and
+        ;; quit-mode will be active simultaneously. I could trigger this on any cmd-q
+        ;; but I'd rather limit its use to control-mode.
+        ;;
+        ;; DETAILS
+        ;; a second 'q' in this mode quits focused application
+        ;; `o` in this mode restarts omniwm
+        ;; while in mode, any other key (caps lock, escape, shift+q, ...) = cancel
+        ;;
+        {:des "OPMODE-QUIT: control mode `q`: q again = quit app"
+         :rules [:quit-mode ;; all rules in this block are for QUIT-MODE
+
+                 [:q [{:key :q :modi :left_command :repeat false} ["quit-mode" 0] [:noti :quit]]]
+                 [:o [[:omniwm-kill] ["quit-mode" 0] [:noti :quit]]]
+                 [{:any :key_code :modi {:optional :any}} [["quit-mode" 0] [:noti :quit]]]
+
+                 ;;
+                 ]}
+
+        ;; HELP-MODE
+        ;;
+        ;; SUMMARY
+        ;; "latched layer": entered by caps+/ (see OPSMODE-CORE), which also shows the
+        ;; keymap help overlay (~/bin/keymap-help). Stays on with nothing held; the next
+        ;; key press of any kind hides the overlay and ends the mode.
+        ;; The dismissing key is ingested and discarded (so / again = toggle off,
+        ;; and caps+esc dismisses instead of locking the screen).
+        ;;
+        ;; IMPORTANT POSITION NOTE
+        ;; Must stay above the OPSMODE-* blocks, same reason as QUIT-MODE.
+        ;;
+        {:des "OPSMODE-HELP: caps lock + / shows keymap help; any key hides it"
+         :rules [:help-mode ;; all rules in this block are for HELP-MODE
+
+                 [{:any :key_code :modi {:optional :any}} [[:keymap-help-hide] ["help-mode" 0]]]
+
+                 ;;
+                 ]}
+
+        ;; {:des "OPSMODE-CURSOR: Vimalike. HJKL in opsmode move the cursor."
+        ;;  :rules [:opsmode ;; all rules in this block are for opsmode
+        ;;          ;; vim direction keys as arrows
+        ;;          [:h :left_arrow]
+        ;;          [:j :down_arrow]
+        ;;          [:k :up_arrow]
+        ;;          [:l :right_arrow]
+        ;;          ;;
+        ;;          ]}
+
+        {:des "OPSMODE-CORE: Basic muscle memory shortcuts mapped to operations mode."
+         :rules [:opsmode ;; all rules in this block are for opsmode
+
+                 ;; new windows and tab / tab control
+                 [:#SSw :!Cw]           ; command-w (close window)
+                 [:#SSn :!COn :finder]   ; command-n (new window finder since I have 'new windows open in tabs' set in finder to eat random finder windows that pop up)
+                 [:#SSn :!Cn]           ; command-n (new window)
+                 [:t :!Cn :vscode]      ; t -> command-n (new vscode doc tab)
+                 [:t :!Ct]              ; command-t (new tab)
+                 [:!SSt :!SCt]          ; command-shift-t (undo close tab in most browsers)
+                 ;; TODO: add a condition for the above rule that limits to browsers
+                 [:open_bracket :!SCopen_bracket]   ; move to the prev (left) tab in a tabbed view
+                 [:close_bracket :!SCclose_bracket] ; move to the next (right) tab in a tabbed view
+
+                 ;; copy paste undo
+                 [:z :!Cz] ; undo
+                 [:x :!Cx] ; cut
+                 [:c :!Cc] ; copy
+                 [:v :!Cv] ; paste
+
+                 ;; mouse
+                 [{:pkey :button1} {:pkey :button1 :modi :left_command}] ; left click -> cmd-click
+
+                 ;; quit-mode (confirm before quit since q is danger close to capslock/tab primary keys)
+                 ;; q -> quit mode (notification shows): q again quits, * key cancels, 5s timeout
+                 [:q [["quit-mode" 1] [:noti :quit "q again to quit\no to kill omniwm"]] nil
+                  {:delayed {:invoked [["quit-mode" 0] [:noti :quit]]    ; 5s bail
+                             :canceled [["quit-mode" 0] [:noti :quit]]}  ; non q cancel
+                   :params {:delay 5000}}]                               ; this rule only
+
+                 ;; system control
+                 [:escape :!CTq] ; fast lock system
+                 [:s :!CTOf13]   ; soundsource window
+
+                 ;; activate launcher of choice 
+                 [:spacebar :!CTOspacebar]
+
+                 ;; / = show keymap help until the next key press (see HELP-MODE)
+                 [:slash [[:keymap-help] ["help-mode" 1]]]
+
+                 ;;
+                 ]}
+
+        {:des "OPSMODE-APPS: Spawn/raise/control primary applications."
+         :rules [:opsmode ;; all rules in this block are for opsmode
+
+                 ;; non-open mode fast new windows
+                 ;; see OPSMODE-WM-APPS below for plain return quake term
+                 [:!SSreturn_or_enter [:new-window "Ghostty" "new window"]]
+                 [:!SSbackslash [:new-window "Safari" "make new document"]]
+                 [:!SSdelete_or_backspace [:new-window "Finder" "make new Finder window"]]
+
+                 ;; networking
+                 [:e [:tailscale-exit-cycle]] ; cycle tailscale exit node
+
+                 ;; open-mode
+                 ;; enter OPEN-MODE (see above); it times out after 10s if no key is pressed.
+                 ;; any key press cancels timer. see the open-mode rules block
+                 ;;  [:o [["open-mode" 1] [:noti :open "Open: s f r g c"]] nil
+                 ;;   {:delayed {:invoked [["open-mode" 0] [:noti :open]]    ; 10s, nothing pressed = leave open-mode
+                 ;;              :canceled [["open-mode" 0] [:noti :open]]}   ; timer stopped early (e.g. a click) = leave too
+                 ;;    :params {:delay 10000}}]                            ; this rule only
+
+                 ;;
+                 ]}
+
+        {:des "OPSMODE-CURSOR-OVERRIDE: HJKL as cursors in specific apps."
+         :rules [:wmmode ;; all rules in this block are for wmmode (currently consolidated with opsmode)
+                 ;; vim direction keys = NAVIGATE within workspaces
+                 [:h :left_arrow  :tuna]
+                 [:j :down_arrow  :tuna]
+                 [:k :up_arrow    :tuna]
+                 [:l :right_arrow :tuna]
+                 ;;
+                 ]}
+
+        ;; Layer conditions use the keyword form: :wm-mode means "variable wm-mode is 1",
+        ;; the same as ["wm-mode" 1]. As the first item in :rules it applies to every rule after it.
+        ;; Goku doesn't check the name, so a typo (:wm-mdoe) compiles silently and never matches.
+        {:des "OPSMODE-WM-NAV: HJKL navigation and window movement."
+         :rules [:wmmode ;; all rules in this block are for wmmode (currently consolidated with opsmode)
+
+                 ;; vim direction keys = NAVIGATE within workspaces
+                 [:h :left_arrow  :omniwm]
+                 [:j :down_arrow  :omniwm]
+                 [:k :up_arrow    :omniwm]
+                 [:l :right_arrow :omniwm]
+
+                 ;; vim direction keys = NAVIGATE within workspaces
+                 [:h [:omniwm-cli "focus left"]]
+                 [:j [:omniwm-cli "focus down"]]
+                 [:k [:omniwm-cli "focus up"]]
+                 [:l [:omniwm-cli "focus right"]]
+
+                 ;; vim direction keys + Shift = MOVE window
+                 ;; note that this DOES cross monitor boundaries
+                 [:!SSh [:omniwm-cli "move left"]]
+                 [:!SSj [:omniwm-cli "move down"]]
+                 [:!SSk [:omniwm-cli "move up"]]
+                 [:!SSl [:omniwm-cli "move right"]]
+
+                 ;; vim direction keys + Command = MOVE *column*
+                 ;; note that this does NOT cross monitor boundaries
+                 [:!CC#SSh [:omniwm-cli "move-column left"]]
+                 [:!CC#SSj [:omniwm-cli "move-column down"]]
+                 [:!CC#SSk [:omniwm-cli "move-column up"]]
+                 [:!CC#SSl [:omniwm-cli "move-column right"]]
+
+                 ;; vim direction keys + Option = NUDGE current window (if floating)
+                 [:!OO#SSh [:nudge -40   0]] ; left
+                 [:!OO#SSj [:nudge   0  40]] ; down
+                 [:!OO#SSk [:nudge   0 -40]] ; up
+                 [:!OO#SSl [:nudge  40   0]] ; right
+
+                 ;;
+                 ]}
+
+        {:des "OPSMODE-WM-WORKSPACES: Workspace 1-9 navigation and window movement."
+         :rules [:wmmode ;; all rules in this block are for wmmode (currently consolidated with opsmode)
+                 ;; 0-9 = JUMP to workspaces
+                 [:1 [:omniwm-cli "switch-workspace 1"]]
+                 [:2 [:omniwm-cli "switch-workspace 2"]]
+                 [:3 [:omniwm-cli "switch-workspace 3"]]
+                 [:4 [:omniwm-cli "switch-workspace 4"]]
+                 [:5 [:omniwm-cli "switch-workspace 5"]]
+                 [:6 [:omniwm-cli "switch-workspace 6"]]
+                 [:7 [:omniwm-cli "switch-workspace 7"]]
+                 [:8 [:omniwm-cli "switch-workspace 8"]]
+                 [:9 [:omniwm-cli "switch-workspace 9"]]
+                 ;; 0-9+Shift = MOVE window to workspace
+                 [:!SS1 [:omniwm-cli "move-to-workspace 1"]]
+                 [:!SS2 [:omniwm-cli "move-to-workspace 2"]]
+                 [:!SS3 [:omniwm-cli "move-to-workspace 3"]]
+                 [:!SS4 [:omniwm-cli "move-to-workspace 4"]]
+                 [:!SS5 [:omniwm-cli "move-to-workspace 5"]]
+                 [:!SS6 [:omniwm-cli "move-to-workspace 6"]]
+                 [:!SS7 [:omniwm-cli "move-to-workspace 7"]]
+                 [:!SS8 [:omniwm-cli "move-to-workspace 8"]]
+                 [:!SS9 [:omniwm-cli "move-to-workspace 9"]]
+                 ;; 0-9+Command = MOVE COLUMN to workspace
+                 [:!CC1 [:omniwm-cli "move-column-to-workspace 1"]]
+                 [:!CC2 [:omniwm-cli "move-column-to-workspace 2"]]
+                 [:!CC3 [:omniwm-cli "move-column-to-workspace 3"]]
+                 [:!CC4 [:omniwm-cli "move-column-to-workspace 4"]]
+                 [:!CC5 [:omniwm-cli "move-column-to-workspace 5"]]
+                 [:!CC6 [:omniwm-cli "move-column-to-workspace 6"]]
+                 [:!CC7 [:omniwm-cli "move-column-to-workspace 7"]]
+                 [:!CC8 [:omniwm-cli "move-column-to-workspace 8"]]
+                 [:!CC9 [:omniwm-cli "move-column-to-workspace 9"]]
+                 ;; omniwm workspace related
+                 [:p             [:omniwm-cli "switch-workspace back-and-forth"]] ;toggle between last two ws
+                 [:y             [:omniwm-cli "toggle-overview"]]                 ; ws overview
+                 [:i             [:omniwm-cli "switch-workspace prev"]]           ; jump left a workspace
+                 [:o             [:omniwm-cli "switch-workspace next"]]           ; jump right a workspace
+                 [:!SSi          [:omniwm-cli "move-to-workspace up"]]            ; move left a workspace
+                 [:!SSo          [:omniwm-cli "move-to-workspace down"]]          ; move right a workspace
+                 [:u             [:omniwm-swap-workspaces]]                       ; custom swap up/down ws
+                 ;;
+                 ]}
+        
+        {:des "OPSMODE-WM-WINDOWS: Window management within OmniWM."
+         :rules [:wmmode ;; all rules in this block are for wmmode (currently consolidated with opsmode)
+                 ;; other omniwm window management commands 
+                 [:f [:omniwm-cli "toggle-container-full-primary-span"]] ; full primary span
+                 [:!SSf [:omniwm-cli "toggle-native-fullscreen"]]        ; native fullscreen
+                 [:semicolon [:omniwm-split]]
+                 [:!SSsemicolon [:omniwm-cli "cycle-size backward"]]             ; grow (loops)
+                 [:quote [:omniwm-cli "center-column"]]              ; center column on display
+                 ;;[:quote [:omniwm-cli "cycle-size forward"]]             ; grow (loops)
+                 [:!SSquote [:omniwm-cli "balance-sizes"]]           ; 50/50
+                 ;;[:!SSquote [:omniwm-cli "cycle-size backward"]]         ; shrink (loops)
+                 ;;[:!SSg [:omniwm-split 66.667]]
+                 [:g [:omniwm-cli "toggle-focused-window-floating"]
+                  nil {:delayed {:invoked :!TFc :canceled :!TFc}
+                       :params {:delay 150}}]                            ; toggle float
+                 [:!SSg [:omniwm-cli-multi "rescue-offscreen-windows"
+                         "raise-all-floating-windows"]]                   ; leeloo dallas multipass
+                 [:!CCt [:omniwm-cli "toggle-column-tabbed"]]            ; toggle tabbed state of col
+                 ;;
+                 ]}
+
+        {:des "OPSMODE-WM-WSPRESETS: Jump and launch apps for workspace."
+         :rules [:wmmode ;; all rules in this block are for wmmode (currently consolidated with opsmode)
+                 [:!SSCC7 [:omniwm-workspace-preset "7 com.flexibits.fantastical2.mac:66.667 com.apple.reminders:33.333"]]
+                 [:!SSCC8 [:omniwm-workspace-preset "8 com.apple.Mail com.apple.MobileSMS com.hnc.Discord"]]
+                 ;;
+                 ] 
+         }
+
+        {:des "OPSMODE-WM-MENUS: Access system icons and menus in OmniWM."
+         :rules [:wmmode ;; all rules in this block are for wmmode (currently consolidated with opsmode)
+                 [:m [:omniwm-cli "open-menu-anywhere"]]                 ; key press menu anywhere
+                 [:!SSm [:omniwm-cli "hidden-bar panel"]]                ; key press hidden icons
+                 [:!CCm [:omniwm-cli "hidden-bar"]]                ; key press hidden icons
+                 ;;
+]};
+
+        {:des "OPSMODE-WM-MOUSE-BUTTONS: Top level mouse button remapping for omniwm"
+         :rules [;; top-level, no layer (but wm specific hence :des)
+                 [{:pkey :button4} [:omniwm-cli "open-menu-anywhere"]]
+                 ;;
+                 ]}
+
+        {:des "OPSMODE-WM-APPS: Launch and control key applications."
+         :rules [:wmmode ;; all rules in this block are for wmmode (currently consolidated with opsmode)
+
+                 ;; wm specific launcher
+                 [:!CCspacebar [:omniwm-cli "open-command-palette"]]
+
+                 ;; app toggles on keyboard right
+                 [:return_or_enter [:omniwm-cli "toggle-quake-terminal"]]
+                 [:backslash [:omniwm-scratchpad 5 "com.apple.safari"]]
+                 ;;[:delete_or_backspace [:omniwm-scratchpad 2 "com.binarynights.ForkLift"]]
+                 [:delete_or_backspace [:omniwm-scratchpad 2 "com.apple.Finder"]]
+                 ;; keep the follow rule above the 2SHIFT=CAPSLOCK block so it fires first
+                 [:right_shift :right_shift :remind-me-faster {:alone :escape}]                 ; app frontmost: tap = esc (dismiss)
+                 [:right_shift :right_shift nil {:alone [:oid "chojubo.addReminder"]}]          ; otherwise: tap = open it
+                 ;;[:right_shift :escape nil {:alone [:oid "chojubo.addReminder"]} :remind-me-faster]
+
+                 ;; scratchpad function keys
+                 [:f1 [:omniwm-cli "toggle-quake-terminal"]]
+                 ;;[:f2 [:omniwm-scratchpad 2 "com.binarynights.ForkLift"]]
+                 [:f2 [:omniwm-scratchpad 2 "com.apple.Finder"]]
+                 [:f3 [:omniwm-scratchpad 3 "com.iconfactory.Tot"]]
+                 [:f4 [:omniwm-scratchpad 4 "com.apple.MobileSMS"]]
+
+                 ;;
+                 ]}
+
+        {:des "2SHIFT=CAPSLOCK: both shifts together = caps lock toggle"
+         :rules [;; top-level, no layer
+                 [{:sim [:left_shift :right_shift] :modi {:optional :any}} :caps_lock nil {:params {:sim 100}}]
+                 ;;
+                 ]}
+        ;; optional :any is required or it turns caps lock on but never off
+        ;; the "nil" in this rule is a place holder for the conditions slot of this rule
+        ;; which is unused, and we was the options map section for the :params in to 
+        ;; lengthen this particular sim timing just a tad.
+
+        ;; {:des "SLOW-LOCK: hold esc for 1s = lock screen (cmd+ctrl+q)"
+        ;; :rules [[:escape {:key :escape :repeat false} nil {:held :!CTq :params {:held 1000}}]]}
+
+        {:des "FAST-LOCK: esc+ctrl = lock screen (cmd+ctrl+q)"
+         :rules [;; top-level, no layer
+                 [:!Tescape :!CTq]
+                 ;;
+                 ]}
+
+        {:des "OPSMODE-UNIVERSAL-PALETTE: shift-p = Universal application command palette"
+         :rules [:opsmode ;; all rules in this block are for opsmode
+                 [:!SSspacebar [:!SCp] :vscode]
+                 [:!SSspacebar [:!Ck] :discord]
+                 ;;
+                 ]}
+
+        {:des "OPSMODE-UNIVERSAL-SIDEBARS: b = left sidebar toggle (+shift = right sidebar)"
+         :rules [:opsmode ;; all rules in this block are for opsmode
+                 [:sidebar-toggle [:!SCl] :safari]           ; bookmarks bar
+                 [:sidebar-toggle [:!Sl] :google-chrome]     ; vertical tab sidebar
+                 [:sidebar-toggle [:!CTs] :finder]            ; sidebar
+                 [:sidebar-toggle-alt [:!CSp] :finder]        ; preview
+                 [:sidebar-toggle [:!COs] :forklift]         ; left nav sidebar
+                 [:sidebar-toggle-alt [:!CSp] :forklift]     ; info pane
+                 [:sidebar-toggle [:!Cb] :vscode]            ; show/hide explorer pane
+                 [:sidebar-toggle-alt [:!COb] :vscode]       ; show/hide secondary sidebar
+                 [:sidebar-toggle [:!COb] :obsidian]         ; toggle left sidebar (assign in app settings)
+                 [:sidebar-toggle-alt [:!CTb] :obsidian]     ; toggle right sidebar (assign in app settings)
+                 [:sidebar-toggle [:!Cb] :claude]            ; show/hide sidebar
+                 [:sidebar-toggle-alt [:!Cperiod] :claude]   ; show/hide sidebar
+                 [:sidebar-toggle [:!Cu] :discord]           ; toggle channel user list
+                 [:sidebar-toggle-alt [:!Cu] :discord]       ; toggle channel user list (duplicate functionality)
+                 [:sidebar-toggle [:!COs] :fantastical]      ; toggle calendar sidebar
+                 [:sidebar-toggle [:!CTs] :reminders]        ; toggle reminders list sidebar
+                 ;; not working... why? [:sidebar-toggle     [:!Oi]   :numbers-creator-studio] ; toggle inspector
+                 ;;[:sidebar-toggle     [:!Cb]]                      ; old default: no-app-match = default cmd-b
+
+                 ;; DEFAULTS: If app is not defined above, notify rather than typing b/B
+                 ;;[:sidebar-toggle-alt [:noti :sidebar "no alt sidebar mapped"] nil {:afterup [:noti :sidebar]}]
+
+                 [:sidebar-toggle [:noti :sidebar "no left sidebar toggle mapped"] nil
+                  {:delayed {:invoked [:noti :sidebar]    ; nothing else pressed in time, clear after the delay
+                             :canceled [:noti :sidebar]}   ; another key pressed first so clear right away
+                   :params {:delay 1500}}]                ; this rule only; Default profile is still :delay 300
+
+                 [:sidebar-toggle-alt [:noti :sidebar "no right sidebar toggle mapped"] nil
+                  {:delayed {:invoked [:noti :sidebar]    ; nothing else pressed in time, clear after the delay
+                             :canceled [:noti :sidebar]}   ; another key pressed first so clear right away
+                   :params {:delay 1500}}]                ; this rule only; Default profile is still :delay 300
+
+                 ;;
+                 ]}
+
+        ;; may or may not use; currently not mapping control mode `o` activation
+        ;; most key apps are launched with a direct control mode key press
+        ;; other apps can be launched with my current launcher of choice
+        ;;
+        ;; Latched mode: entered by caps+o (see WM-MODE), stays on with nothing held,
+        ;; and ends on the very next key press (or after 10s). The cancelling key is swallowed.
+        ;; Apps with an AppleScript new-window command use the :new-window template
+        ;; (new window if running, otherwise launch). The rest (ForkLift, VS Code: no
+        ;; new-window command) just open with {:softf {:open {:bundle_identifier …}}},
+        ;; the long form of :oid, because [:oid …] only works as a rule's whole output:
+        ;; inside a list of actions it compiles to null. Templates work fine nested.
+        ;; This block must stay above CAPSLOCK->WM-MODE, so a caps lock tap cancels
+        ;; open-mode instead of entering wm-mode (Karabiner uses the first match).
+        ;; {:des "OPEN-MODE: caps lock + o, then (after letting go) one key = new window (or open app); any other key cancels"
+        ;;  :rules [:open-mode   ; applies to every rule below
+        ;;          [:s [[:new-window "Safari" "make new document"] ["open-mode" 0] [:noti :open]]]  ; safari
+        ;;          [:f [[:new-window "Finder" "make new Finder window"] ["open-mode" 0] [:noti :open]]]  ; finder
+        ;;          [:r [{:softf {:open {:bundle_identifier "com.binarynights.ForkLift"}}} ["open-mode" 0] [:noti :open]]]  ; forklift
+        ;;          [:g [[:new-window "Ghostty" "new window"] ["open-mode" 0] [:noti :open]]]  ; ghostty
+        ;;          [:c [[:new-window "Google Chrome" "make new window"] ["open-mode" 0] [:noti :open]]]  ; chrome
+        ;;          [:v [{:softf {:open {:bundle_identifier "com.microsoft.VSCode"}}} ["open-mode" 0] [:noti :open]]]  ; vscode
+
+        ;;          ;; any other key (o, caps lock, escape, modified keys...) = cancel
+        ;;          [{:any :key_code :modi {:optional :any}} [["open-mode" 0] [:noti :open]]]]}
+        ] ;; END :main
+ } ;; END GOKU CONFIG

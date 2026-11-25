@@ -1,0 +1,3 @@
+# ~/.bash_profile: bash login shells. Reads ~/.profile, then ~/.bashrc.
+if [ -r "$HOME/.profile" ]; then . "$HOME/.profile"; fi
+if [ -r "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi

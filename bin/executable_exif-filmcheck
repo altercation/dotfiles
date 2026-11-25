@@ -1,0 +1,1 @@
+exiftool -filmmode $1

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Runs omniwm-tailscale-feed every 10 seconds and at login.
+     launchd does not expand ~ or $HOME, so the path is absolute.
+     Install: copy to ~/Library/LaunchAgents/, then
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.omniwm-tailscale-feed.plist -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.omniwm-tailscale-feed</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/es/bin/omniwm-tailscale-feed</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>10</integer>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>

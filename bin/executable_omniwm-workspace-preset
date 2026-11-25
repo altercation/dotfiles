@@ -1,0 +1,72 @@
+#!/bin/zsh
+# omniwm-workspace-preset <workspace> [bundle-id[:percent] ...]
+#
+# Jump to a themed workspace and make sure its apps are there. For each
+# bundle ID with no window on the workspace:
+#   - a window of that app on another workspace is moved here;
+#   - otherwise the app is opened (or asked for a new window if it is
+#     running with none), and OmniWM's assignToWorkspace rule for the app
+#     puts the new window here. Each app needs that rule.
+# A window whose app is hidden (cmd-H) counts as missing, so it's unhidden.
+#
+# Then, every run, the apps' columns are put in argument order from the
+# left (other columns end up to their right), and an app given a :percent
+# gets that column width, as a percent of the display's working width.
+# Focus doesn't move.
+#
+# <workspace> is the number (raw name). It keeps working after a rename,
+# which only changes the display name.
+#
+# Example (Karabiner):
+#   "$HOME/bin/omniwm-workspace-preset 7 com.flexibits.fantastical2.mac:60 com.apple.reminders"
+# Karabiner runs shell commands with a minimal PATH, so set it here.
+PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+WAIT=10   # seconds to wait for opened apps' windows to arrive
+
+if [[ -z $1 ]]; then
+  print -u2 "usage: ${0:t} <workspace> [bundle-id[:percent] ...]"; exit 3
+fi
+ws=$1; shift
+
+# "<workspace raw name> <window id> <app hidden>" for each managed window of an app
+wins_of() {
+  omniwmctl query windows --bundle-id "$1" --fields id,workspace,is-app-hidden --json 2>/dev/null |
+    jq -r '.result.payload.windows[] | "\(.workspace.rawName) \(.id) \(.isAppHidden)"'
+}
+# the app's first window on this workspace, if any
+here_id() { wins_of "$1" | awk -v ws="$ws" '$1 == ws {print $2; exit}' }
+
+omniwmctl command switch-workspace "$ws" >/dev/null 2>&1
+
+# 1. Make sure each app is here.
+for arg in "$@"; do
+  bid=${arg%%:*}
+  wins=$(wins_of "$bid")
+  if print -r -- "$wins" | grep -q "^$ws .* false$"; then
+    continue                                    # already here and showing
+  fi
+  read -r elsewhere hidden <<<$(print -r -- "$wins" | awk -v ws="$ws" '$1 != ws && $1 != "null" {print $2, $3; exit}')
+  if [[ -n $elsewhere ]]; then
+    omniwmctl window move-to-workspace "$elsewhere" "$ws" >/dev/null 2>&1
+    [[ $hidden == true ]] && open -b "$bid"     # unhide it
+  else
+    open -b "$bid"                              # launch, reopen a window, or unhide
+  fi
+done
+
+# 2. Order and size the columns. An app whose window hasn't arrived yet is
+# waited for (up to WAIT seconds in all); one that never arrives is skipped.
+(( deadline = SECONDS + WAIT ))
+col=1
+for arg in "$@"; do
+  bid=${arg%%:*}
+  id=$(here_id "$bid")
+  while [[ -z $id ]] && (( SECONDS < deadline )); do
+    sleep 0.2; id=$(here_id "$bid")
+  done
+  [[ -n $id ]] || continue
+  omniwmctl window move-column-to-index "$id" $col >/dev/null 2>&1
+  [[ $arg == *:* ]] && omniwmctl window set-container-primary-span "$id" "${arg#*:}%" >/dev/null 2>&1
+  (( col++ ))
+done
+exit 0

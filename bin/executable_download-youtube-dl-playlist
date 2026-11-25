@@ -1,0 +1,1 @@
+yt-dlp -i --format mp4 --yes-playlist $1

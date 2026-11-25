@@ -1,0 +1,18 @@
+{{- if eq .chezmoi.os "darwin" -}}
+#!/bin/zsh
+# Rebuild karabiner.json with goku whenever karabiner.edn changes.
+# chezmoi reruns this script when its rendered text changes; the hash below
+# changes whenever karabiner.edn does.
+# karabiner.edn hash: {{ include "private_dot_config/private_karabiner/karabiner.edn" | sha256sum }}
+
+export PATH="/opt/homebrew/bin:$PATH"
+export GOKU_EDN_CONFIG_FILE="$HOME/.config/karabiner/karabiner.edn"
+
+if ! command -v goku &>/dev/null; then
+  # First run on a new Mac: goku comes from the Brewfile, installed after
+  # chezmoi. system-deployment runs goku itself once it's installed.
+  echo "goku not installed yet; skipping (system-deployment runs it later)."
+  exit 0
+fi
+goku
+{{ end -}}

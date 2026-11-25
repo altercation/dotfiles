@@ -1,0 +1,7 @@
+#!/usr/bin/env zsh
+a=0
+for file in *(.)
+do
+	a=$((a+1))
+        pandoc -o recletter_$a.txt $file
+done

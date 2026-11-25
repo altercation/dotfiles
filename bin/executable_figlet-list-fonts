@@ -1,0 +1,3 @@
+#!/bin/zsh
+
+for font in $(ls -1 /opt/homebrew/Cellar/figlet/2.2.5/share/figlet/fonts); do figlet -f ${font:r} "${font:r}"; done

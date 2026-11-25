@@ -1,0 +1,4 @@
+# argument is name of avi
+# get front cam
+ffmpeg -i $1 -map 0:2 -map 0:0 -vcodec copy dashcam_front.mp4
+ffmpeg -i $1 -map 0:2 -map 0:1 -vcodec copy dashcam_rear.mp4

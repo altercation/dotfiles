@@ -1,0 +1,38 @@
+#!/bin/zsh
+# omniwm-tailscale-feed
+#
+# Read Tailscale's state and push it to OmniWM's bar widgets with
+# `omniwmctl shell set`. Widgets read these as ctx.data.vars[...]:
+#
+#   tailscale.state    connected | exit-node | disconnected | unavailable
+#   tailscale.exit     exit node host name (unset when not using one)
+#   tailscale.backend  Tailscale's raw BackendState (Running, Stopped,
+#                      NeedsLogin, Starting, ...) for a later, richer UI
+#
+# One-shot: run it on a timer (see local.omniwm-tailscale-feed.plist).
+# The values live only until OmniWM quits, so the timer also refills them
+# after an OmniWM restart.
+PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+# /usr/local/bin/tailscale runs the app binary, which decides from the
+# environment whether to act as the CLI or open the app; force the CLI.
+export TAILSCALE_BE_CLI=1
+
+# "<state> <backend> [exit node name]"; empty if the CLI can't reach Tailscale.
+read -r state backend exit <<<$(tailscale status --json 2>/dev/null | jq -r '
+  (.BackendState // "Unknown") as $b
+  | ([.Peer[]? | select(.ExitNode) | .HostName][0] // "") as $x
+  | if $b != "Running" then "disconnected \($b)"
+    elif .ExitNodeStatus != null or $x != "" then "exit-node \($b) \(if $x == "" then "unknown" else $x end)"
+    else "connected \($b)" end')
+[[ -n $state ]] || { state=unavailable backend=None }
+
+{
+  omniwmctl shell set tailscale.state "$state"
+  omniwmctl shell set tailscale.backend "$backend"
+  if [[ -n $exit ]]; then
+    omniwmctl shell set tailscale.exit "$exit"
+  else
+    omniwmctl shell unset tailscale.exit
+  fi
+} >/dev/null 2>&1
+exit 0

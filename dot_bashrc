@@ -1,0 +1,2 @@
+# ~/.bashrc: interactive bash shells that aren't login shells.
+if [ -r "$HOME/.config/shell/init.sh" ]; then . "$HOME/.config/shell/init.sh"; fi

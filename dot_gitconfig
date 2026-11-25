@@ -1,0 +1,10 @@
+[user]
+	name = Ethan Schoonover
+	email = es@ethanschoonover.com
+[core]
+	excludesfile = ~/.gitignore
+[init]
+	defaultBranch = main
+[hook "betterleaks"]
+	event = pre-commit
+	command = ~/bin/git-hook-betterleaks

@@ -1,0 +1,16 @@
+# https://ghostty.org/docs/config
+background-opacity = 0.9
+background-blur = true
+font-size = 16
+font-thicken
+window-padding-x = 5
+window-theme = system
+window-height = 30
+window-width = 100
+theme = light:solarized-light,dark:solarized-dark
+keybind = global:cmd+opt+ctrl+shift+enter=toggle_quick_terminal
+# attempt to fix delete key issue when sshing to remote on macos
+term = xterm-256color
+# Two values specify primary and secondary axis
+quick-terminal-size = 50%,50%
+

@@ -1,0 +1,541 @@
+#!/usr/bin/env zsh
+###############################################################################
+# system-deployment
+# es@ethanschoonover.com / gh:altercation
+#
+# New macos system deployment script. This gets the basics up and running and
+# installs most of whatever I consider my core apps from a Brewfile. That's
+# potentially the area with highest machine to machine variance historically
+# and I can imagine in a world where I had more than 3 or 4 macs I'd see the
+# app config diverge more but as it is I'd like to keep things consistent even
+# if that means installing something on a laptop I don't as much as on, say,
+# a desktop. This is somethign to re-evaluate, future Ethan.
+#
+# Things covered:
+# hostname, some manual sign-ins, macos update, xcode tools, homebrew,
+# 1password, dotfiles via chezmoi, apps/utilities from homebrew/mas,
+# home folder stuff (hiding files, symlinks, etc.), system-defaults.
+#
+# Don't run this on a machine that is already configured...
+# most stuff is safe but it will Make Changes potentially.
+#
+# Usage:
+#   system-deployment           run, or resume after an interruption
+#   system-deployment --reset   forget progress, so every step runs fresh
+#
+# If the script dies or gets interrupted there is a resume feature. Each
+# phase of the script that needs it writes to a local state file and so it
+# should ask on next execution of the script if you want to re-run that
+# script section.
+#
+# n.b.
+# dotfiles, PATH, zsh config, ~/bin and the brewfile come from chezmoi
+###############################################################################
+
+setopt ERR_EXIT PIPE_FAIL
+
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/system-deployment"
+
+case "$1" in
+  --reset) rm -rf "$STATE"; print "Progress cleared."; exit 0 ;;
+  "") ;;
+  *) print "Usage: ${0:t} [--reset]"; exit 2 ;;
+esac
+
+# Make ~/.config and the state folder now, as you, so a later sudo command
+# can't create them owned by root.
+mkdir -p "$HOME/.config" "$STATE"
+
+# The terminal running this needs Full Disk Access (Downloads, Library,
+# system-defaults). Test: list Safari's container, which macOS blocks without
+# it. (macOS 27 has no per-user TCC.db any more, and the system one is
+# readable by everyone, so neither works as a test.) On a brand-new Mac the
+# container may not exist until Safari has run once; then just ask.
+SAFARI_CONTAINER="$HOME/Library/Containers/com.apple.Safari"
+if [[ -d $SAFARI_CONTAINER ]]; then
+  ls "$SAFARI_CONTAINER" &>/dev/null && FDA=yes || FDA=no
+elif read -q "?Does this terminal app have Full Disk Access? [y/n] "; then
+  print; FDA=yes
+else
+  print; FDA=no
+fi
+if [[ $FDA == no ]]; then
+  print "Give this terminal app Full Disk Access, quit and reopen it, then run again."
+  open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+  exit 1
+fi
+
+DONE=( "$STATE"/*(N:t) )
+if (( $#DONE )); then
+  print "Steps already done: ${DONE}"
+elif [[ -d "$HOME/.local/share/chezmoi" ]]; then
+  # No progress yet, but dotfiles are already here: probably a Mac in use.
+  print "WARNING: this Mac looks already set up (chezmoi is initialized) but has no"
+  print "deployment progress, so every step will run. Ctrl-C now unless that's intended."
+fi
+read "?Press Enter to start, or Ctrl-C to cancel. "
+
+# Ask for the administrator password once, then keep sudo alive until done.
+sudo -v
+while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+
+
+# =============================================================================
+STEP=01-hostname
+# =============================================================================
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  NAME=$(scutil --get LocalHostName)
+  vared -p "Hostname for this Mac (letters, digits, hyphens): " NAME
+  if [[ ! $NAME =~ '^[A-Za-z0-9-]+$' ]]; then
+    print "Invalid hostname: $NAME"
+    exit 1
+  fi
+  sudo scutil --set HostName "$NAME"        # primary hostname
+  sudo scutil --set LocalHostName "$NAME"   # Bonjour name (NAME.local)
+  sudo scutil --set ComputerName "$NAME"    # friendly name shown in Finder
+  sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string "$NAME"
+  # Flush the DNS cache (Apple's current method).
+  sudo dscacheutil -flushcache
+  sudo killall -HUP mDNSResponder
+  print "Hostname set to $NAME. Confirm in System Settings > General > Sharing after a restart."
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=02-icloud-signin
+# =============================================================================
+# manual. probably already signed in from initial system setup but good to chk
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  open "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings"
+  print "
+Sign in to your Apple Account (iCloud) in System Settings, and let it start syncing."
+  if ! read -q "?Done? [y = yes, n = stop, ask again next run] "; then
+    print "\nStopping. Run system-deployment again to pick up here."
+    exit 1
+  fi
+  print
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=03-messages-signin
+# =============================================================================
+# manual
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  open -a Messages
+  print "
+In Messages, check you're signed in to iMessage with the same Apple Account,
+and turn on Messages in iCloud (Messages > Settings > iMessage)."
+  if ! read -q "?Done? [y = yes, n = stop, ask again next run] "; then
+    print "\nStopping. Run system-deployment again to pick up here."
+    exit 1
+  fi
+  print
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=04-macos-update
+# =============================================================================
+# lists updates and ask before installing, since the install restarts without
+# asking. state marker is written before installing because the restart kills
+# this script. Run system-deployment again after the restart.
+# todo: i should move this to the start? or just manually note it at the start?
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  print "Checking for updates..."
+  UPDATES=$(softwareupdate --list 2>&1 || true)
+  print -r -- "$UPDATES"
+  if [[ $UPDATES == *"No new software available"* ]]; then
+    print "macOS is up to date."
+    date > "$STATE/$STEP"
+  elif read -q "?Install these now? The Mac will restart and unsaved work in open apps may be lost. [y/n] "; then
+    print
+    date > "$STATE/$STEP"
+    sudo softwareupdate --install --all --restart --force
+  else
+    print "\nSkipping updates for now. This step comes up again next run."
+  fi
+fi
+
+
+# =============================================================================
+# 05-xcode-tools (checks itself)
+# =============================================================================
+if ! xcode-select -p &>/dev/null; then
+  print "==> 05-xcode-tools"
+  xcode-select --install
+  print "Waiting for the Command Line Tools installer to finish..."
+  until xcode-select -p &>/dev/null; do sleep 10; done
+fi
+
+
+# =============================================================================
+# 06-homebrew (checks itself)
+# =============================================================================
+# checks the path rather than `command -v brew`: brew isn't on PATH yet in a
+# fresh shell
+if [[ ! -x /opt/homebrew/bin/brew ]]; then
+  print "==> 06-homebrew"
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+fi
+
+# Put brew on PATH for the rest of this run.
+# (the shell gets this from the chezmoi managed .zshenv later)
+eval "$(/opt/homebrew/bin/brew shellenv)"
+
+
+# =============================================================================
+# 07-chezmoi-1password (checks itself)
+# =============================================================================
+# installed through brew (not by hand) so they show up in brew bundle dump.
+# 1password-cli isn't needed yet; test it later with `op vault list`.
+# todo: I could add an automatic known-good-state check that runs
+# `op vault list` and other critical functions after install?
+for PACKAGE in chezmoi 1password 1password-cli; do
+  brew list "$PACKAGE" &>/dev/null || brew install "$PACKAGE"
+done
+
+
+# =============================================================================
+STEP=08-ssh-stubs
+# =============================================================================
+# minimal files so 1Password's ssh-agent can authenticate the chezmoi repo...
+# chezmoi replaces both in step 11 (it will ask about overwriting).
+# SSH_AUTH_SOCK comes from ~/.config/zsh/.zshenv (via chezmoi) and is exported
+# for this run after step 10. Once the repo is public and cloned over HTTPS,
+# this step can go (chezmoi can manage both files).
+# todo: a) I might move to a public repo b) does chezmoi have the remote set
+# up correctly in that case (i.e. for pushing)
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  mkdir -p -m 700 "$HOME/.ssh"
+  mkdir -p "$HOME/.config/1Password/ssh"
+
+  if [[ ! -e "$HOME/.ssh/config" ]]; then
+    cat > "$HOME/.ssh/config" <<'EOF'
+Host *
+    IdentityAgent "~/.1password/agent.sock"
+EOF
+  else
+    print "Note: ~/.ssh/config already exists, leaving it alone."
+  fi
+
+  if [[ ! -e "$HOME/.config/1Password/ssh/agent.toml" ]]; then
+    cat > "$HOME/.config/1Password/ssh/agent.toml" <<'EOF'
+[[ssh-keys]]
+vault = "DEV"
+EOF
+  else
+    print "Note: agent.toml already exists, leaving it alone."
+  fi
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=09-1password-signin
+# =============================================================================
+# manual: ssh-agent (next step) and chezmoi's clone need this
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  open /Applications/1Password.app
+  print "
+In the 1Password app:
+  * Sign in to your account and let it finish syncing
+  * Settings > General: Start at login
+  * Settings > Security: Preset > Balanced (or customize)
+  * Settings > Browser: Connect with 1Password in the browser
+  * Settings > Developer: turn everything on (SSH agent, CLI integration)"
+  if ! read -q "?Done? [y = yes, n = stop, ask again next run] "; then
+    print "\nStopping. Run system-deployment again to pick up here."
+    exit 1
+  fi
+  print
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=10-1password-agent
+# =============================================================================
+# link 1Password's agent socket to a short path and test it against GitHub.
+# chezmoi also manages this link (private_dot_1password/symlink_agent.sock.tmpl),
+# but the clone in step 11 needs it first, while the repo is cloned over SSH.
+# Once cloned over HTTPS (public repo), the ln line can go; keep the ssh test.
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  mkdir -p "$HOME/.1password"
+  ln -sfn "$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock" "$HOME/.1password/agent.sock"
+
+  # test the agent, trust GitHub's host key so chezmoi's clone doesn't stop
+  # at a prompt. github always exits 1 here, even when the key works
+  SSH_AUTH_SOCK="$HOME/.1password/agent.sock" ssh -T -o StrictHostKeyChecking=accept-new git@github.com || true
+
+  date > "$STATE/$STEP"
+fi
+
+# Use 1Password's agent for the rest of this run, including runs that skip 10.
+export SSH_AUTH_SOCK="$HOME/.1password/agent.sock"
+
+
+# =============================================================================
+STEP=11-chezmoi-dotfiles
+# =============================================================================
+# chezmoi manages most of my critical configs but also scripts in bin and stuff
+# like the global Brewfile. It also creates the ~/.zshenv, ~/ark and
+# ~/.1password/agent.sock links and the ~/tmp folder, and runs goku when
+# karabiner.edn changes (.chezmoiscripts/run_onchange_after_goku.sh.tmpl).
+# if chezmoi is already set up here, pull and apply instead of initializing;
+# chezmoi asks before overwriting files changed since it last wrote them.
+# The short form `chezmoi init --apply altercation` only works for a public repo.
+# todo: migrate to public repo after I finish cleaning things up
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  if [[ -d "$HOME/.local/share/chezmoi" ]]; then
+    chezmoi update
+  else
+    chezmoi init --apply git@github.com:altercation/dotfiles.git
+  fi
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=12-app-store-signin
+# =============================================================================
+# manual: Brewfile's mas apps fail without it, and mas can't sign in.
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  open -a "App Store"
+  print "
+Sign in to the App Store (Store > Sign In) with your Apple Account."
+  if ! read -q "?Done? [y = yes, n = stop, ask again next run] "; then
+    print "\nStopping. Run system-deployment again to pick up here."
+    exit 1
+  fi
+  print
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=13-brewfile
+# =============================================================================
+# if an item fails, the deploy script stops here. fix it (or comment it out of
+# the Brewfile) and re-run system-deployment
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  BREWFILE="$HOME/.homebrew/Brewfile"
+  brew bundle check --file "$BREWFILE" || brew bundle install --file "$BREWFILE"
+
+  # The Brewfile also installs VS Code extensions (its `vscode` lines, through
+  # the `code` command the visual-studio-code cask adds).
+  # TODO: uv tools. Maybe a chezmoi run_onchange_ script next to the list.
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+# 14-foundation-models (checks itself)
+# =============================================================================
+# apple Foundation Models license. `fm license --status` prints something like
+# "Agreed to license FM1 version 1.1 on ...". Matches on the text, since I
+# don't know if the exit code is non zero if unlicensed. todo: check that
+if ! command -v fm &>/dev/null; then
+  print "Note: no fm command on this Mac, skipping the Foundation Models license."
+elif [[ "$(fm license --status 2>&1)" != *[Aa]greed* ]]; then
+  print "==> 14-foundation-models"
+  sudo fm license
+fi
+
+
+# =============================================================================
+STEP=15-home-folder
+# =============================================================================
+# Hide the standard home folders. (The ~/ark link to iCloud Drive comes from
+# chezmoi in step 11: symlink_ark.tmpl.)
+# cf http://karolis.koncevicius.lt/posts/cleaning_home_on_macos/
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  print "
+Check that iCloud Drive's Desktop & Documents Folders option is OFF
+(System Settings > Apple Account > iCloud > Drive)."
+  if ! read -q "?Done? [y = yes, n = stop, ask again next run] "; then
+    print "\nStopping. Run system-deployment again to pick up here."
+    exit 1
+  fi
+  print
+
+  # (N) skips any folder that doesn't exist on this Mac.
+  chflags hidden "$HOME"/(Applications|Desktop|Documents|Downloads|Library|Movies|Music|Pictures|Public)(N)
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=16-downloads-to-tmp
+# =============================================================================
+# replace ~/Downloads with a link to ~/tmp. Easier than pointing every app
+# that downloads files at ~/tmp. Anything already in Downloads moves to ~/tmp,
+# but no same name overwrite (mv -n). if anything is left behind then
+# Downloads stays as it is and the step comes up again next run (alert so
+# I can clean up Downloads and deal with leftovers).
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  # ~/tmp comes from chezmoi (tmp/.keep, step 11).
+  if [[ ! -d "$HOME/tmp" ]]; then
+    print "~/tmp is missing. Check that chezmoi applied (step 11)."
+    exit 1
+  fi
+  if [[ -L "$HOME/Downloads" ]]; then
+    print "~/Downloads is already a link, skipping."
+    date > "$STATE/$STEP"
+  else
+    FILES=( "$HOME"/Downloads/*(DN) )
+    if (( $#FILES )); then
+      mv -n "${FILES[@]}" "$HOME/tmp/" || true   # leftovers are caught below
+    fi
+    LEFT=( "$HOME"/Downloads/*(DN) )
+    if (( $#LEFT )); then
+      print "
+WARNING: ~/Downloads was NOT replaced with a link to ~/tmp.
+These are still in ~/Downloads (most likely ~/tmp already has files with these names):"
+      print -l "  ${^LEFT:t}"
+      print "Move or delete them by hand, then run system-deployment again."
+    else
+      # sudo because macOS puts a "deny delete" ACL on ~/Downloads.
+      sudo rm -rf "$HOME/Downloads"
+      ln -s tmp "$HOME/Downloads"
+      chflags -h hidden "$HOME/Downloads"   # -h acts on the link itself
+      date > "$STATE/$STEP"
+    fi
+  fi
+fi
+
+
+# =============================================================================
+# 17-touch-id-sudo (checks itself)
+# =============================================================================
+# apples method (macOS 14+, confirm on 27.*): /etc/pam.d/sudo starts
+# with `auth include sudo_local`, and sudo_local.template ships with the
+# pam_tid.so line commented out. copy the template with that line turned on.
+# sudo_local survives macOS updates.
+# ----> never edit /etc/pam.d/sudo itself. <----
+# doesn't work inside tmux (that would need a third-party module)
+# todo: tmux stuff
+if ! grep -qs '^auth.*pam_tid\.so' /etc/pam.d/sudo_local; then
+  if [[ -e /etc/pam.d/sudo_local ]]; then
+    print "Note: /etc/pam.d/sudo_local exists but has no active pam_tid.so line. Leaving it alone; check it by hand."
+  else
+    print "==> 17-touch-id-sudo"
+    sed 's/^#auth/auth/' /etc/pam.d/sudo_local.template | sudo tee /etc/pam.d/sudo_local >/dev/null
+    sudo chmod 444 /etc/pam.d/sudo_local   # match the template: root:wheel, read-only
+  fi
+fi
+
+
+# =============================================================================
+STEP=18-app-setup
+# =============================================================================
+# manual permissions (full disk access, accessibility, etc) can't be
+# granted from a script
+# todo: how much of this can I automate somehow?
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+  print "
+Do these by hand:
+  * Full Disk Access: Ghostty, if this run is in Terminal (for future system-defaults runs)
+  * Install from the web, not brew: Tailscale, Little Snitch, Simple Podcast
+    Manager (so their daemons and extensions install cleanly)
+  * Tailscale: turn on the CLI if the zsh config doesn't; check \`tailscale status\`
+  * Open and set up the Rogue Amoeba apps (SoundSource, Loopback, Audio Hijack)
+  * Keyboard Maestro: turn on sync
+  * Karabiner-Elements: grant its permissions, rename the profile to \"Default\"
+  * FileVault: check with \`fdesetup status\`"
+  if ! read -q "?Done? [y = yes, n = stop, ask again next run] "; then
+    print "\nStopping. Run system-deployment again to pick up here."
+    exit 1
+  fi
+  print
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=19-goku
+# =============================================================================
+# rebuilds the Karabiner config from the karabiner.edn that chezmoi pulled.
+# After this first run, chezmoi reruns goku whenever karabiner.edn changes
+# (run_onchange_after_goku). It's needed here because goku isn't installed yet
+# when chezmoi first applies (step 11); it comes from the Brewfile (step 13).
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  goku
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=20-system-defaults
+# =============================================================================
+# macos settings live in their own script, which chezmoi puts in ~/bin (step 11).
+# it should ask before it executes
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  if [[ ! -x "$HOME/bin/system-defaults" ]]; then
+    print "~/bin/system-defaults is missing. Check that chezmoi applied (step 11)."
+    exit 1
+  fi
+  "$HOME/bin/system-defaults"
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=21-finish
+# =============================================================================
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  brew cleanup
+  brew doctor || true   # exits 1 for warnings, which are often harmless
+
+  date > "$STATE/$STEP"
+fi
+
+print "New system deploy script complete. Restart to apply changes."

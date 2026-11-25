@@ -1,0 +1,2 @@
+exiftool -Copyright= -CopyrightNotice= -Rights= -overwrite_original -r "$1"
+#exiftool -Copyright= -CopyrightNotice= -Rights= -r "$1"

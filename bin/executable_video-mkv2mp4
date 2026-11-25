@@ -1,0 +1,3 @@
+#!/bin/zsh
+file=$1
+ffmpeg -i ${file} -vcodec copy -acodec copy ${file:t:r}.mp4

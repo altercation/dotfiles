@@ -1,0 +1,112 @@
+#!/bin/zsh
+# omniwm-scratchpad <slot> <bundle-id>
+#
+# Toggle OmniWM scratchpad <slot>, then make sure an app's window is on it.
+# Stopgap until OmniWM app rules can assign apps to scratchpads.
+#
+#   1. Toggle the scratchpad right away (the fast path: app already assigned).
+#   2. If a window of <bundle-id> is already on <slot>: done.
+#   3. Otherwise launch the app if it has no window (wait up to ~5s for one),
+#      assign its most recently used window to <slot>, then wait (up to ~1s)
+#      for OmniWM to hide it and toggle once so the app appears.
+#   4. Only if step 3 had to launch the app (it wasn't running): once the
+#      window shows, shrink any axis over MAX of the display's usable area to
+#      SHRINK, then center it. One visible jump; OmniWM keeps the new frame
+#      for later toggles.
+#
+# Example (Karabiner): "$HOME/bin/omniwm-scratchpad 2 com.binarynights.ForkLift"
+# Step 4 needs Accessibility permission for the process that runs it
+# (Karabiner's console user server when started from a key).
+# Karabiner runs shell commands with a minimal PATH, so set it here.
+PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+MAX=0.9      # fraction of the display; an axis bigger than this gets shrunk
+SHRINK=0.7   # ...to this fraction
+
+slot=$1 bid=$2
+if [[ $slot != <1-10> || -z $bid ]]; then
+  print -u2 "usage: ${0:t} <slot 1-10> <bundle-id>"
+  exit 3
+fi
+
+# Commands: omniwmctl prints results (and errors like "error: not_found") on stdout.
+wmc() { omniwmctl "$@" >/dev/null 2>&1 }
+# Queries: JSON on stdout.
+wmq() { omniwmctl "$@" 2>/dev/null }
+
+# Opaque IDs of this app's managed windows, most recently used first.
+# With $1 = slot, only the windows already on that scratchpad.
+app_windows() {
+  wmq query windows --bundle-id "$bid" --sort mru --fields id,is-scratchpad,scratchpad-index --json |
+    jq -r --argjson s "${1:-0}" '.result.payload.windows[]?
+      | select($s == 0 or .scratchpadIndex == $s) | .id'
+}
+
+# 1. Fast path: toggle first. An empty scratchpad answers not_found; ignore it.
+wmc command scratchpad toggle "$slot"
+
+# 2. Already assigned: the toggle above was all we needed.
+[[ -n $(app_windows "$slot") ]] && exit 0
+
+# 3a. No managed window yet: launch (or reopen) the app and wait for one.
+win=${$(app_windows)[1]}
+launched=
+if [[ -z $win ]]; then
+  # Running but windowless just reopens; only a real launch gets step 4.
+  [[ $(osascript -e "application id \"$bid\" is running" 2>/dev/null) == true ]] || launched=1
+  open -b "$bid" || exit 1
+  for i in {1..25}; do
+    sleep 0.2
+    win=${$(app_windows)[1]}
+    [[ -n $win ]] && break
+  done
+  [[ -z $win ]] && exit 1
+fi
+
+# 3b. Assign it. assign-to-scratchpad toggles membership, which is why
+# step 2 makes sure the window isn't on this slot already.
+wmc window assign-to-scratchpad "$win" "$slot" || exit 1
+
+# 3c. Assigning hides the window, but not always by the time we look.
+# Wait for the hide (up to ~1s), then toggle once so the app shows.
+for i in {1..10}; do
+  hidden=$(wmq query windows --window "$win" --fields hidden-reason --json |
+    jq -r '.result.payload.windows[0].hiddenReason // empty')
+  [[ $hidden == scratchpad ]] && { wmc command scratchpad toggle "$slot"; revealed=1; break }
+  sleep 0.1
+done
+
+# 4. First launch only: size and center the window once it's showing.
+[[ -n $launched && -n $revealed ]] || exit 0
+
+# Wait (up to ~1s) until it's visible and its frame stops changing.
+prev=
+for i in {1..10}; do
+  sleep 0.1
+  info=$(wmq query windows --window "$win" --fields pid,frame,display,hidden-reason --json |
+    jq -c '.result.payload.windows[0] // empty')
+  [[ -z $info || -n $(jq -r '.hiddenReason // empty' <<<$info) ]] && continue
+  [[ $info == $prev ]] && break      # same frame twice in a row = settled
+  prev=$info
+done
+[[ -n $info && -z $(jq -r '.hiddenReason // empty' <<<$info) ]] || exit 0
+
+# OmniWM frames use macOS screen coordinates (origin at the bottom-left of the
+# main display, y up). System Events wants top-left, y down from the top of
+# the main display, so: top = mainHeight - (y + height).
+read -r pid w h x top <<<$(wmq query displays --fields id,is-main,frame,visible-frame --json |
+  jq -r --argjson win "$info" --argjson max $MAX --argjson shrink $SHRINK '
+  .result.payload.displays as $ds
+  | ($ds[] | select(.isMain) | .frame.height) as $mainH
+  | ($ds[] | select(.id == $win.display.id) | .visibleFrame) as $v
+  | (if $win.frame.width  > $v.width  * $max then $v.width  * $shrink else $win.frame.width  end | floor) as $w
+  | (if $win.frame.height > $v.height * $max then $v.height * $shrink else $win.frame.height end | floor) as $h
+  | ($v.x + ($v.width  - $w) / 2 | floor) as $x
+  | ($v.y + ($v.height - $h) / 2) as $y
+  | "\($win.pid) \($w) \($h) \($x) \($mainH - ($y + $h) | floor)"')
+[[ -n $top ]] || exit 0
+
+osascript -e "tell application \"System Events\" to tell (first application process whose unix id is $pid) to tell window 1
+  set size to {$w, $h}
+  set position to {$x, $top}
+end tell" >/dev/null 2>&1
+exit 0

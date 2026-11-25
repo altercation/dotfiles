@@ -1,0 +1,6 @@
+# Files chezmoi deletes from the home folder on apply.
+# Check first with: chezmoi apply --dry-run --verbose
+
+# Old zsh config: zsh reads ~/.config/zsh/.zshrc now (ZDOTDIR). ~/.zshenv is a
+# symlink managed by symlink_dot_zshenv.tmpl, so it is not listed here.
+.zshrc

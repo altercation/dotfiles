@@ -1,0 +1,81 @@
+#!/bin/zsh
+# omniwm-split [percent]
+#
+# Split the screen width between the focused column and its on-screen
+# neighbor: the focused column gets <percent>, the neighbor gets the rest.
+# Focus doesn't move.
+#
+# With no argument, cycle the focused column through CYCLE below:
+# 50 -> 66.667 -> 33.333 -> 50 ... The current step is read from the two
+# columns' widths; if they aren't near any step, start at the first one.
+#
+# OmniWM columns have independent widths (niri model), so this sets both
+# by window ID. The neighbor is whichever adjacent column (left or right)
+# shows most on the focused window's display; the right one wins a tie.
+#
+# If no neighbor is visible (the focused column is alone on screen), run
+# `omniwmctl command cycle-size backward` instead, to step it down.
+# A neighbor showing less than SEEN points doesn't count: OmniWM parks
+# off-screen columns with a 1-point sliver on the display.
+# Does nothing for a floating window.
+#
+# Example (Karabiner): "$HOME/bin/omniwm-split" or "$HOME/bin/omniwm-split 75"
+# Karabiner runs shell commands with a minimal PATH, so set it here.
+PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+CYCLE=(50 66.667 33.333)   # focused column's share, in order
+NEAR=3                     # within this many points = "at" a step
+SEEN=50                    # a neighbor must show this many points to count
+
+if [[ -n $1 && $1 != (<->|<->.<->|.<->) ]]; then
+  print -u2 "usage: ${0:t} [percent]   (no argument = cycle ${(j: -> :)CYCLE})"
+  exit 3
+fi
+wmq() { omniwmctl "$@" 2>/dev/null }
+
+wins=$(wmq query windows --fields id,workspace,display,column-index,mode,frame,is-focused --json)
+displays=$(wmq query displays --fields id,frame --json)
+
+# "<focused id> <neighbor id> <focused share %>": neighbors are tiled windows
+# one column left or right on the same workspace, ranked by how much of their
+# width is on the focused window's display. Share = focused width as a percent
+# of the two widths together. Neighbor "-" = none visible. A lone column has
+# no column index, so it gets -99 and matches no neighbor.
+read -r me other share <<<$(jq -r --argjson ds "$displays" --argjson seen $SEEN '
+  .result.payload.windows as $ws
+  | ($ws[] | select(.isFocused and .mode == "tiling")) as $f
+  | ($f.columnIndex // -99) as $c
+  | ($ds.result.payload.displays[] | select(.id == $f.display.id) | .frame) as $d
+  | [ $ws[]
+      | select(.mode == "tiling" and .workspace.id == $f.workspace.id
+               and (.columnIndex == $c - 1 or .columnIndex == $c + 1))
+      | { id,
+          width: .frame.width,
+          right: (.columnIndex > $f.columnIndex),
+          shown: (([.frame.x + .frame.width, $d.x + $d.width] | min) - ([.frame.x, $d.x] | max)) } ]
+  | (sort_by(.shown, .right) | last) as $n
+  | if $n == null or $n.shown < $seen then "\($f.id) - 0"
+    else "\($f.id) \($n.id) \($f.frame.width * 100 / ($f.frame.width + $n.width))" end' <<<$wins)
+[[ -n $me ]] || exit 0   # no focused tiled window
+
+if [[ $other == - ]]; then
+  omniwmctl command cycle-size backward >/dev/null 2>&1
+  exit 0
+fi
+
+if [[ -n $1 ]]; then
+  pct=$1
+else
+  pct=$CYCLE[1]
+  for i in {1..${#CYCLE}}; do
+    if (( share - CYCLE[i] < NEAR && CYCLE[i] - share < NEAR )); then
+      (( next = i % ${#CYCLE} + 1 ))   # the step after this one, wrapping
+      pct=$CYCLE[next]
+      break
+    fi
+  done
+fi
+rest=$(printf '%.3f' $(( 100 - pct )))
+
+omniwmctl window set-container-primary-span "$me" "${pct}%" >/dev/null 2>&1
+omniwmctl window set-container-primary-span "$other" "${rest}%" >/dev/null 2>&1
+exit 0

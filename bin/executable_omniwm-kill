@@ -1,0 +1,2 @@
+#!/usr/bin/env zsh
+pkill -x OmniWM; while pgrep -qx OmniWM; do sleep 0.2; done; open -b com.barut.OmniWM

@@ -1,0 +1,1 @@
+lpr -o raw -H localhost -P munbyn_pos $1

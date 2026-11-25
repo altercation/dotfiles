@@ -1,0 +1,6 @@
+.DS_Store
+.vscode
+
+# Private files (e.g. a generated env.private). Never commit these anywhere.
+# Templates that produce them end in .tmpl, so they are not matched.
+*.private

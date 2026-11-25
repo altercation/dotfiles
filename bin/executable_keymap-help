@@ -1,0 +1,56 @@
+#!/usr/bin/osascript -l JavaScript
+// keymap-help [file]
+//
+// Show the keymap help file (PDF or PNG; a PDF shows its first page) in a
+// borderless window floating above all app windows, on the display under
+// the mouse pointer. It takes no focus and ignores clicks, so it neither
+// changes the active app nor gets in OmniWM's way. Runs until killed.
+//
+// Karabiner runs this on opsmode `/` and enters HELP-MODE; the next key
+// press of any kind hides it with
+//   pkill -f 'JavaScript .*keymap-hel[p]'
+// (the [p] keeps pkill from matching the shell that runs pkill itself).
+ObjC.import('Cocoa');
+
+const FILE = '/.config/karabiner/help.pdf'; // under $HOME; override with an argument
+const FIT = 0.66;                            // max fraction of the display, each axis
+
+function run(argv) {
+  const path = argv[0] || $.NSHomeDirectory().js + FILE;
+  const img = $.NSImage.alloc.initWithContentsOfFile(path);
+  if (img.isNil()) return;
+
+  const app = $.NSApplication.sharedApplication;
+  app.setActivationPolicy(1); // accessory: no Dock icon, no menu bar
+
+  // The display under the mouse pointer (fallback: the first one).
+  const mouse = $.NSEvent.mouseLocation;
+  const screens = $.NSScreen.screens;
+  let screen = screens.objectAtIndex(0);
+  for (let i = 0; i < screens.count; i++) {
+    const s = screens.objectAtIndex(i);
+    if ($.NSMouseInRect(mouse, s.frame, false)) { screen = s; break; }
+  }
+  const v = screen.visibleFrame;
+
+  // Scale to fit FIT of the display, keeping the aspect ratio.
+  const scale = Math.min(v.size.width * FIT / img.size.width, v.size.height * FIT / img.size.height);
+  const w = Math.floor(img.size.width * scale), h = Math.floor(img.size.height * scale);
+  const rect = $.NSMakeRect(v.origin.x + (v.size.width - w) / 2, v.origin.y + (v.size.height - h) / 2, w, h);
+
+  // Borderless (0) + non-activating panel (1 << 7), buffered backing (2).
+  const win = $.NSPanel.alloc.initWithContentRectStyleMaskBackingDefer(rect, 128, 2, false);
+  win.level = 25;                        // status level: above normal and floating windows
+  win.collectionBehavior = 1 | 16 | 256; // all spaces, stationary, over full-screen apps
+  win.ignoresMouseEvents = true;
+  win.hasShadow = true;
+  win.backgroundColor = $.NSColor.whiteColor; // PDFs are often transparent; white page behind
+
+  const view = $.NSImageView.alloc.initWithFrame($.NSMakeRect(0, 0, w, h));
+  view.imageScaling = 3; // proportionally up or down
+  view.image = img;
+  win.contentView = view;
+
+  win.orderFrontRegardless;
+  app.run;
+}

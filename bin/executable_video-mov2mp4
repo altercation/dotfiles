@@ -1,0 +1,3 @@
+#!/bin/zsh
+file=$1
+ffmpeg -i ${file} -vcodec h264 ${file:t:r}_.mp4
