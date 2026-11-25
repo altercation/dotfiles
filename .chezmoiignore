@@ -7,3 +7,6 @@
 
 # Repo docs, not a home-folder file
 README.md
+
+# Local-only ssh hosts (never managed or committed)
+.ssh/config.d/local.private

@@ -20,7 +20,9 @@
 # most stuff is safe but it will Make Changes potentially.
 #
 # Usage:
-#   system-deployment           run, or resume after an interruption
+#   zsh -c "$(curl -fsSL https://raw.githubusercontent.com/altercation/dotfiles/main/bin/executable_system-deployment)"
+#                               first run on a new Mac, straight from the public repo
+#   system-deployment           run, or resume after an interruption (in ~/bin after step 11)
 #   system-deployment --reset   forget progress, so every step runs fresh
 #
 # If the script dies or gets interrupted there is a resume feature. Each
@@ -29,7 +31,8 @@
 # script section.
 #
 # n.b.
-# dotfiles, PATH, zsh config, ~/bin and the brewfile come from chezmoi
+# dotfiles, PATH, zsh config, ~/bin, ssh config and the brewfile come from
+# chezmoi (step 11)
 ###############################################################################
 
 setopt ERR_EXIT PIPE_FAIL
@@ -211,47 +214,10 @@ done
 
 
 # =============================================================================
-STEP=08-ssh-stubs
-# =============================================================================
-# minimal files so 1Password's ssh-agent can authenticate the chezmoi repo...
-# chezmoi replaces both in step 11 (it will ask about overwriting).
-# SSH_AUTH_SOCK comes from ~/.config/zsh/.zshenv (via chezmoi) and is exported
-# for this run after step 10. Once the repo is public and cloned over HTTPS,
-# this step can go (chezmoi can manage both files).
-# todo: a) I might move to a public repo b) does chezmoi have the remote set
-# up correctly in that case (i.e. for pushing)
-if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
-  print "==> $STEP"
-
-  mkdir -p -m 700 "$HOME/.ssh"
-  mkdir -p "$HOME/.config/1Password/ssh"
-
-  if [[ ! -e "$HOME/.ssh/config" ]]; then
-    cat > "$HOME/.ssh/config" <<'EOF'
-Host *
-    IdentityAgent "~/.1password/agent.sock"
-EOF
-  else
-    print "Note: ~/.ssh/config already exists, leaving it alone."
-  fi
-
-  if [[ ! -e "$HOME/.config/1Password/ssh/agent.toml" ]]; then
-    cat > "$HOME/.config/1Password/ssh/agent.toml" <<'EOF'
-[[ssh-keys]]
-vault = "DEV"
-EOF
-  else
-    print "Note: agent.toml already exists, leaving it alone."
-  fi
-
-  date > "$STATE/$STEP"
-fi
-
-
-# =============================================================================
 STEP=09-1password-signin
 # =============================================================================
-# manual: ssh-agent (next step) and chezmoi's clone need this
+# manual: chezmoi (step 11) needs 1Password signed in, with CLI integration on:
+# the .private templates (env.private, ssh hosts, betterleaks rules) read from it
 if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
   print "==> $STEP"
 
@@ -262,7 +228,8 @@ In the 1Password app:
   * Settings > General: Start at login
   * Settings > Security: Preset > Balanced (or customize)
   * Settings > Browser: Connect with 1Password in the browser
-  * Settings > Developer: turn everything on (SSH agent, CLI integration)"
+  * Settings > Developer: turn everything on (SSH agent, CLI integration,
+    and Advanced > generate SSH config files with bookmarked hosts)"
   if ! read -q "?Done? [y = yes, n = stop, ask again next run] "; then
     print "\nStopping. Run system-deployment again to pick up here."
     exit 1
@@ -274,20 +241,48 @@ fi
 
 
 # =============================================================================
-STEP=10-1password-agent
+STEP=11-chezmoi-dotfiles
 # =============================================================================
-# link 1Password's agent socket to a short path and test it against GitHub.
-# chezmoi also manages this link (private_dot_1password/symlink_agent.sock.tmpl),
-# but the clone in step 11 needs it first, while the repo is cloned over SSH.
-# Once cloned over HTTPS (public repo), the ln line can go; keep the ssh test.
+# public repo, cloned over HTTPS. chezmoi brings in the zsh/shell config, ~/bin
+# (including this script and system-defaults), the Brewfile, ~/.ssh/config and
+# config.d/hosts.private, 1Password's agent.toml, the .private files, the git
+# hook, the ~/.zshenv, ~/ark and ~/.1password/agent.sock links and ~/tmp, and
+# runs goku when karabiner.edn changes.
+# if chezmoi is already set up here, pull and apply instead of initializing;
+# chezmoi asks before overwriting files changed since it last wrote them.
 if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
   print "==> $STEP"
 
-  mkdir -p "$HOME/.1password"
-  ln -sfn "$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock" "$HOME/.1password/agent.sock"
+  if [[ -d "$HOME/.local/share/chezmoi" ]]; then
+    chezmoi update
+  else
+    chezmoi init --apply altercation        # github.com/altercation/dotfiles
+  fi
 
-  # test the agent, trust GitHub's host key so chezmoi's clone doesn't stop
-  # at a prompt. github always exits 1 here, even when the key works
+  # ssh hosts for this Mac only (not chezmoi-managed, never committed)
+  LOCAL_SSH="$HOME/.ssh/config.d/local.private"
+  if [[ ! -e $LOCAL_SSH ]]; then
+    (umask 077; print -l \
+      "# ~/.ssh/config.d/local.private: ssh hosts for THIS Mac only." \
+      "# Not managed by chezmoi (.chezmoiignore) and never committed (*.private)." \
+      "# Included by ~/.ssh/config. Hosts for every Mac go in 1Password DEV/ssh-config." \
+      "#" "# Host example" "#     HostName example.local" "#     User me" > "$LOCAL_SSH")
+  fi
+
+  date > "$STATE/$STEP"
+fi
+
+
+# =============================================================================
+STEP=10-github-ssh
+# =============================================================================
+# the clone was over HTTPS; push over SSH through 1Password's agent (the link
+# and ~/.ssh/config come from chezmoi in step 11). runs after 11 on purpose.
+if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
+  print "==> $STEP"
+
+  chezmoi git -- remote set-url --push origin git@github.com:altercation/dotfiles.git
+  # test the agent and trust GitHub's host key. github exits 1 even on success
   SSH_AUTH_SOCK="$HOME/.1password/agent.sock" ssh -T -o StrictHostKeyChecking=accept-new git@github.com || true
 
   date > "$STATE/$STEP"
@@ -295,30 +290,6 @@ fi
 
 # Use 1Password's agent for the rest of this run, including runs that skip 10.
 export SSH_AUTH_SOCK="$HOME/.1password/agent.sock"
-
-
-# =============================================================================
-STEP=11-chezmoi-dotfiles
-# =============================================================================
-# chezmoi manages most of my critical configs but also scripts in bin and stuff
-# like the global Brewfile. It also creates the ~/.zshenv, ~/ark and
-# ~/.1password/agent.sock links and the ~/tmp folder, and runs goku when
-# karabiner.edn changes (.chezmoiscripts/run_onchange_after_goku.sh.tmpl).
-# if chezmoi is already set up here, pull and apply instead of initializing;
-# chezmoi asks before overwriting files changed since it last wrote them.
-# The short form `chezmoi init --apply altercation` only works for a public repo.
-# todo: migrate to public repo after I finish cleaning things up
-if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
-  print "==> $STEP"
-
-  if [[ -d "$HOME/.local/share/chezmoi" ]]; then
-    chezmoi update
-  else
-    chezmoi init --apply git@github.com:altercation/dotfiles.git
-  fi
-
-  date > "$STATE/$STEP"
-fi
 
 
 # =============================================================================
