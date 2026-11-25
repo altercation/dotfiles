@@ -22,7 +22,7 @@
 # Usage:
 #   zsh -c "$(curl -fsSL https://raw.githubusercontent.com/altercation/dotfiles/main/bin/executable_system-deployment)"
 #                               first run on a new Mac, straight from the public repo
-#   system-deployment           run, or resume after an interruption (in ~/bin after step 11)
+#   system-deployment           run, or resume after an interruption (in ~/bin after step 09)
 #   system-deployment --reset   forget progress, so every step runs fresh
 #
 # If the script dies or gets interrupted there is a resume feature. Each
@@ -32,7 +32,7 @@
 #
 # n.b.
 # dotfiles, PATH, zsh config, ~/bin, ssh config and the brewfile come from
-# chezmoi (step 11)
+# chezmoi (step 09)
 ###############################################################################
 
 setopt ERR_EXIT PIPE_FAIL
@@ -206,17 +206,16 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 # =============================================================================
 # installed through brew (not by hand) so they show up in brew bundle dump.
 # 1password-cli isn't needed yet; test it later with `op vault list`.
-# todo: I could add an automatic known-good-state check that runs
-# `op vault list` and other critical functions after install?
+# (step 09 checks that op can read the DEV vault before running chezmoi)
 for PACKAGE in chezmoi 1password 1password-cli; do
   brew list "$PACKAGE" &>/dev/null || brew install "$PACKAGE"
 done
 
 
 # =============================================================================
-STEP=09-1password-signin
+STEP=08-1password-signin
 # =============================================================================
-# manual: chezmoi (step 11) needs 1Password signed in, with CLI integration on:
+# manual: chezmoi (step 09) needs 1Password signed in, with CLI integration on:
 # the .private templates (env.private, ssh hosts, betterleaks rules) read from it
 if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
   print "==> $STEP"
@@ -241,7 +240,7 @@ fi
 
 
 # =============================================================================
-STEP=11-chezmoi-dotfiles
+STEP=09-chezmoi-dotfiles
 # =============================================================================
 # public repo, cloned over HTTPS. chezmoi brings in the zsh/shell config, ~/bin
 # (including this script and system-defaults), the Brewfile, ~/.ssh/config and
@@ -252,6 +251,12 @@ STEP=11-chezmoi-dotfiles
 # chezmoi asks before overwriting files changed since it last wrote them.
 if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
   print "==> $STEP"
+
+  # chezmoi's .private templates read 1Password: make sure the CLI can (step 08)
+  if ! op vault get DEV &>/dev/null; then
+    print "1Password CLI can't read the DEV vault. Check step 08 (sign in, CLI integration), then run again."
+    exit 1
+  fi
 
   if [[ -d "$HOME/.local/share/chezmoi" ]]; then
     chezmoi update
@@ -277,7 +282,7 @@ fi
 STEP=10-github-ssh
 # =============================================================================
 # the clone was over HTTPS; push over SSH through 1Password's agent (the link
-# and ~/.ssh/config come from chezmoi in step 11). runs after 11 on purpose.
+# and ~/.ssh/config come from chezmoi in step 09).
 if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
   print "==> $STEP"
 
@@ -293,7 +298,7 @@ export SSH_AUTH_SOCK="$HOME/.1password/agent.sock"
 
 
 # =============================================================================
-STEP=12-app-store-signin
+STEP=11-app-store-signin
 # =============================================================================
 # manual: Brewfile's mas apps fail without it, and mas can't sign in.
 if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
@@ -313,7 +318,7 @@ fi
 
 
 # =============================================================================
-STEP=13-brewfile
+STEP=12-brewfile
 # =============================================================================
 # if an item fails, the deploy script stops here. fix it (or comment it out of
 # the Brewfile) and re-run system-deployment
@@ -332,7 +337,7 @@ fi
 
 
 # =============================================================================
-# 14-foundation-models (checks itself)
+# 13-foundation-models (checks itself)
 # =============================================================================
 # apple Foundation Models license. `fm license --status` prints something like
 # "Agreed to license FM1 version 1.1 on ...". Matches on the text, since I
@@ -340,16 +345,16 @@ fi
 if ! command -v fm &>/dev/null; then
   print "Note: no fm command on this Mac, skipping the Foundation Models license."
 elif [[ "$(fm license --status 2>&1)" != *[Aa]greed* ]]; then
-  print "==> 14-foundation-models"
+  print "==> 13-foundation-models"
   sudo fm license
 fi
 
 
 # =============================================================================
-STEP=15-home-folder
+STEP=14-home-folder
 # =============================================================================
 # Hide the standard home folders. (The ~/ark link to iCloud Drive comes from
-# chezmoi in step 11: symlink_ark.tmpl.)
+# chezmoi in step 09: symlink_ark.tmpl.)
 # cf http://karolis.koncevicius.lt/posts/cleaning_home_on_macos/
 if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
   print "==> $STEP"
@@ -371,7 +376,7 @@ fi
 
 
 # =============================================================================
-STEP=16-downloads-to-tmp
+STEP=15-downloads-to-tmp
 # =============================================================================
 # replace ~/Downloads with a link to ~/tmp. Easier than pointing every app
 # that downloads files at ~/tmp. Anything already in Downloads moves to ~/tmp,
@@ -381,9 +386,9 @@ STEP=16-downloads-to-tmp
 if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
   print "==> $STEP"
 
-  # ~/tmp comes from chezmoi (tmp/.keep, step 11).
+  # ~/tmp comes from chezmoi (tmp/.keep, step 09).
   if [[ ! -d "$HOME/tmp" ]]; then
-    print "~/tmp is missing. Check that chezmoi applied (step 11)."
+    print "~/tmp is missing. Check that chezmoi applied (step 09)."
     exit 1
   fi
   if [[ -L "$HOME/Downloads" ]]; then
@@ -413,7 +418,7 @@ fi
 
 
 # =============================================================================
-# 17-touch-id-sudo (checks itself)
+# 16-touch-id-sudo (checks itself)
 # =============================================================================
 # apples method (macOS 14+, confirm on 27.*): /etc/pam.d/sudo starts
 # with `auth include sudo_local`, and sudo_local.template ships with the
@@ -426,7 +431,7 @@ if ! grep -qs '^auth.*pam_tid\.so' /etc/pam.d/sudo_local; then
   if [[ -e /etc/pam.d/sudo_local ]]; then
     print "Note: /etc/pam.d/sudo_local exists but has no active pam_tid.so line. Leaving it alone; check it by hand."
   else
-    print "==> 17-touch-id-sudo"
+    print "==> 16-touch-id-sudo"
     sed 's/^#auth/auth/' /etc/pam.d/sudo_local.template | sudo tee /etc/pam.d/sudo_local >/dev/null
     sudo chmod 444 /etc/pam.d/sudo_local   # match the template: root:wheel, read-only
   fi
@@ -434,7 +439,7 @@ fi
 
 
 # =============================================================================
-STEP=18-app-setup
+STEP=17-app-setup
 # =============================================================================
 # manual permissions (full disk access, accessibility, etc) can't be
 # granted from a script
@@ -464,31 +469,32 @@ fi
 
 
 # =============================================================================
-STEP=19-goku
+STEP=18-goku
 # =============================================================================
 # rebuilds the Karabiner config from the karabiner.edn that chezmoi pulled.
 # After this first run, chezmoi reruns goku whenever karabiner.edn changes
 # (run_onchange_after_goku). It's needed here because goku isn't installed yet
-# when chezmoi first applies (step 11); it comes from the Brewfile (step 13).
+# when chezmoi first applies (step 09); it comes from the Brewfile (step 12).
 if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
   print "==> $STEP"
 
-  goku
+  # this run started before chezmoi set up .zshenv, so set the path goku needs here
+  GOKU_EDN_CONFIG_FILE="$HOME/.config/karabiner/karabiner.edn" goku
 
   date > "$STATE/$STEP"
 fi
 
 
 # =============================================================================
-STEP=20-system-defaults
+STEP=19-system-defaults
 # =============================================================================
-# macos settings live in their own script, which chezmoi puts in ~/bin (step 11).
+# macos settings live in their own script, which chezmoi puts in ~/bin (step 09).
 # it should ask before it executes
 if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
   print "==> $STEP"
 
   if [[ ! -x "$HOME/bin/system-defaults" ]]; then
-    print "~/bin/system-defaults is missing. Check that chezmoi applied (step 11)."
+    print "~/bin/system-defaults is missing. Check that chezmoi applied (step 09)."
     exit 1
   fi
   "$HOME/bin/system-defaults"
@@ -498,7 +504,7 @@ fi
 
 
 # =============================================================================
-STEP=21-finish
+STEP=20-finish
 # =============================================================================
 if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " && [[ $REPLY == [Yy]* ]]; }; then
   print "==> $STEP"
@@ -510,3 +516,4 @@ if [[ ! -e "$STATE/$STEP" ]] || { read "?$STEP already done. Run again? [y/N] " 
 fi
 
 print "New system deploy script complete. Restart to apply changes."
+print "Until then, open a new terminal window: this one started before chezmoi set up the shell config."
