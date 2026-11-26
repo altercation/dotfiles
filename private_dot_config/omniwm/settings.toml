@@ -111,7 +111,7 @@ workspaceSwipeFingerCount = 3
 
 [hiddenBar]
 enabled = true
-hiddenBundleIDs = ["com.rogueamoeba.audiohijack", "pro.betterdisplay.BetterDisplay", "maccatalyst.com.overdesigned.Cheatsheet", "com.flexibits.fantastical2.mac", "com.mr-brightside.myParcel", "com.rogueamoeba.soundsource", "io.tailscale.ipn.macsys", "com.iconfactory.Tot", "uk.whatcable.whatcable", "com.brnbw.Tuna", "com.stairways.keyboardmaestro.editor", "com.hegenberg.BetterTouchTool", "org.pqrs.Karabiner-Console-User-Server", "chojubo.addReminder", "com.edovia.screens.5", "com.1password.1password", "jp.sone.BLEUnlock"]
+hiddenBundleIDs = []
 rehideIntervalSeconds = 5.0
 
 [island]

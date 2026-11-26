@@ -1344,6 +1344,12 @@ sudo systemsetup -setrestartfreeze on
 # Remote Login (SSH). Default: off.
 sudo systemsetup -setremotelogin on
 
+# Screen Sharing (VNC). Default: off. Admins only by default; see System
+# Settings > General > Sharing. VERIFY on macOS 27 (may need System Settings).
+# enable = persists across reboots; bootstrap = start now (fails if already loaded).
+sudo launchctl enable system/com.apple.screensharing
+sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+
 # --- Power (pmset) -----------------------------------------------------------
 # Check current values with `pmset -g custom`. Stock values vary by model.
 # -a = all power sources, -c = charger/AC, -b = battery.
