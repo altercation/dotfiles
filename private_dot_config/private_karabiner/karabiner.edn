@@ -515,8 +515,8 @@
                  ;; non-open mode fast new windows
                  ;; see OPSMODE-WM-APPS below for plain return quake term
                  [:!SSreturn_or_enter [:new-window "Ghostty" "new window"]]
-                 [:!SSbackslash [:new-window "Safari" "make new document"]]
-                 [:!SSdelete_or_backspace [:new-window "Finder" "make new Finder window"]]
+                 [:backslash [:new-window "Safari" "make new document"]]
+                 [:delete_or_backspace [:new-window "Finder" "make new Finder window"]]
 
                  ;; networking
                  [:e [:tailscale-exit-cycle]] ; cycle tailscale exit node
@@ -677,9 +677,9 @@
 
                  ;; app toggles on keyboard right
                  [:return_or_enter [:omniwm-cli "toggle-quake-terminal"]]
-                 [:backslash [:omniwm-scratchpad 5 "com.apple.safari"]]
+                 [:!SSbackslash [:omniwm-scratchpad 5 "com.apple.safari"]]
                  ;;[:delete_or_backspace [:omniwm-scratchpad 2 "com.binarynights.ForkLift"]]
-                 [:delete_or_backspace [:omniwm-scratchpad 2 "com.apple.Finder"]]
+                 [:!SSdelete_or_backspace [:omniwm-scratchpad 2 "com.apple.Finder"]]
                  ;; keep the follow rule above the 2SHIFT=CAPSLOCK block so it fires first
                  [:right_shift :right_shift :remind-me-faster {:alone :escape}]                 ; app frontmost: tap = esc (dismiss)
                  [:right_shift :right_shift nil {:alone [:oid "chojubo.addReminder"]}]          ; otherwise: tap = open it

@@ -4,6 +4,8 @@ tap "yqrashawn/goku"
 brew "python@3.15"
 # Music library manager and tagger
 brew "beets"
+# Secrets scanner built for configurability and speed
+brew "betterleaks"
 # Resource monitor. C++ version and continuation of bashtop and bpytop
 brew "btop"
 # Manage your dotfiles across multiple diverse machines, securely
@@ -16,6 +18,8 @@ brew "eza"
 brew "fd"
 # Play, record, convert, and stream many audio and video codecs
 brew "ffmpeg-full", link: true
+# Command-line management for Google Workspace
+brew "gam"
 # GitHub command-line tool
 brew "gh"
 # Ping, but with a graph
@@ -96,6 +100,9 @@ cask "devonthink"
 cask "discord"
 # Calendar software
 cask "fantastical"
+cask "font-atkinson-hyperlegible"
+cask "font-atkinson-hyperlegible-mono"
+cask "font-atkinson-hyperlegible-next"
 cask "font-iosevka-term-nerd-font"
 # Git client
 cask "fork"

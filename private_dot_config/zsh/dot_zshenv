@@ -14,12 +14,21 @@ export ENV="$HOME/.config/shell/init.sh"   # interactive sh reads $ENV
 if [[ -r $ENV ]]; then source "$ENV"; fi
 
 # PATH ----------------------------------------------------------------
-export PATH=$PATH\
-:$HOME/bin\
-:$HOME/Documents/ark/bin\
-:$HOME/arkon/mda/audio/scripts\
-:$HOME/signal-proc/scripts\
+export PATH="
+:$HOME/bin
+:$HOME/Documents/ark/bin
+:$HOME/arkon/mda/audio/scripts
+:$HOME/signal-proc/scripts
 :$HOME/.local/bin
+:$PATH
+"
+
+# BREW ----------------------------------------------------------------
+# redundant with .zprofile call of homebrew shellev but being safe here
+export PATH="
+:/opt/homebrew/bin:/opt/homebrew/sbin:
+:$PATH
+"
 
 # SSH CONFIG (1PASSWORD) ----------------------------------------------
 # following requires a symlink to:
