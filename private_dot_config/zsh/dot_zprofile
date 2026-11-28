@@ -1,0 +1,3 @@
+# .zprofile: login shells only, read after .zshenv.
+# Puts Homebrew in front of /usr/bin (path_helper in /etc/zprofile adds it last).
+eval "$(/opt/homebrew/bin/brew shellenv zsh)"
