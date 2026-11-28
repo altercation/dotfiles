@@ -112,7 +112,8 @@ brew doctor || true   # exits 1 for warnings, usually harmless
 # =============================================================================
 # --describe keeps the comment above each entry, matching the current file
 print "==> 5. Brewfile dump"
-brew bundle dump --force --describe --file "$BREWFILE"
+#brew bundle dump --force --describe --file "$BREWFILE"
+brew bundle dump --force --file "$BREWFILE"
 
 
 # =============================================================================
